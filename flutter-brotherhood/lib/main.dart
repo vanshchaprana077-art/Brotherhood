@@ -3,10 +3,43 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:workmanager/workmanager.dart';
+import 'package:intl/intl.dart';
 import 'firebase_options.dart';
 import 'providers/app_provider.dart';
 import 'screens/identity_selection_screen.dart';
 import 'screens/main_nav_screen.dart';
+import 'services/firebase_service.dart';
+import 'models/task.dart';
+
+// ── Background task dispatcher (must be a top-level function) ─────────────────
+
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((taskName, inputData) async {
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      final service = FirebaseService();
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+      if (taskName == _kDailyReset) {
+        // 1. Stamp today in Firestore
+        await service.initializeDay(today);
+        // 2. Recalculate & persist streaks for all members
+        await service.recalculateAndSaveAllStreaks(DailyTask.defaults);
+      }
+    } catch (_) {
+      // Swallow — background tasks must not throw
+    }
+    return Future.value(true);
+  });
+}
+
+const _kDailyReset = 'brotherhoodDailyReset';
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,9 +48,18 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
+  // WorkManager — fires the daily reset task every 24 hours
+  await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+  await Workmanager().registerPeriodicTask(
+    _kDailyReset,
+    _kDailyReset,
+    frequency: const Duration(hours: 24),
+    initialDelay: _timeUntilMidnight(),
+    constraints: Constraints(networkType: NetworkType.connected),
+    existingWorkPolicy: ExistingWorkPolicy.replace,
+  );
+
+  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   runApp(
     ChangeNotifierProvider(
@@ -26,6 +68,16 @@ void main() async {
     ),
   );
 }
+
+/// Calculates how long until the next midnight so the first run aligns.
+Duration _timeUntilMidnight() {
+  final now = DateTime.now();
+  final midnight =
+      DateTime(now.year, now.month, now.day + 1); // next midnight
+  return midnight.difference(now);
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
 
 class BrotherhoodApp extends StatelessWidget {
   const BrotherhoodApp({super.key});
@@ -55,9 +107,7 @@ class BrotherhoodApp extends StatelessWidget {
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: const Color(0xFF0F0F1A),
-      textTheme: GoogleFonts.poppinsTextTheme(
-        ThemeData.dark().textTheme,
-      ),
+      textTheme: GoogleFonts.poppinsTextTheme(ThemeData.dark().textTheme),
       cardTheme: CardThemeData(
         color: const Color(0xFF1A1A2E),
         elevation: 0,
@@ -90,11 +140,10 @@ class BrotherhoodApp extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
           textStyle: GoogleFonts.poppins(
-            fontWeight: FontWeight.w600,
-            fontSize: 15,
-          ),
+              fontWeight: FontWeight.w600, fontSize: 15),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -113,6 +162,8 @@ class BrotherhoodApp extends StatelessWidget {
   }
 }
 
+// ── App root ──────────────────────────────────────────────────────────────────
+
 class AppRoot extends StatefulWidget {
   const AppRoot({super.key});
 
@@ -129,6 +180,7 @@ class _AppRootState extends State<AppRoot> {
       provider.listenTasks();
       provider.listenTodayCompletions();
       provider.listenAllMembersToday();
+      provider.listenStreaks();
     });
   }
 

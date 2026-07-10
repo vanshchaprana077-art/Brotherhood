@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import 'home_screen.dart';
 import 'calendar_screen.dart';
+import 'history_screen.dart';
 import 'members_screen.dart';
 import 'leaderboard_screen.dart';
 import 'admin_screen.dart';
@@ -33,6 +34,11 @@ class _MainNavScreenState extends State<MainNavScreen> {
         label: 'Calendar',
       ),
       const NavigationDestination(
+        icon: Icon(Icons.history_rounded),
+        selectedIcon: Icon(Icons.history_rounded),
+        label: 'History',
+      ),
+      const NavigationDestination(
         icon: Icon(Icons.group_outlined),
         selectedIcon: Icon(Icons.group_rounded),
         label: 'Members',
@@ -53,6 +59,7 @@ class _MainNavScreenState extends State<MainNavScreen> {
     final screens = [
       const HomeScreen(),
       const CalendarScreen(),
+      const HistoryScreen(),
       const MembersScreen(),
       const LeaderboardScreen(),
       if (isAdmin) const AdminScreen(),
@@ -63,7 +70,10 @@ class _MainNavScreenState extends State<MainNavScreen> {
     return Scaffold(
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 300),
-        child: screens[clampedIndex],
+        child: KeyedSubtree(
+          key: ValueKey(clampedIndex),
+          child: screens[clampedIndex],
+        ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: clampedIndex,

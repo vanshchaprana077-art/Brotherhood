@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
         android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- WorkManager needs these for background execution -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <application
         android:label="Brotherhood"
@@ -36,7 +39,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Notification receivers for flutter_local_notifications -->
+        <!-- flutter_local_notifications receivers -->
         <receiver android:exported="false"
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"/>
         <receiver android:exported="false"
@@ -48,6 +51,12 @@
                 <category android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
         </receiver>
+
+        <!-- WorkManager background service -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"/>
 
         <meta-data
             android:name="flutterEmbedding"

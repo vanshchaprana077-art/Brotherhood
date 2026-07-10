@@ -12,6 +12,14 @@ class FirebaseService {
 
   static String dateKey(DateTime date) => DateFormat('yyyy-MM-dd').format(date);
 
+  static String get todayKey => dateKey(DateTime.now());
+
+  /// A date is locked when it is before today.
+  static bool isDateLocked(String date) {
+    final today = todayKey;
+    return date.compareTo(today) < 0;
+  }
+
   // ── Tasks config ──────────────────────────────────────────────────────────
 
   CollectionReference get _tasksCol => _db.collection('tasks_config');
@@ -63,6 +71,49 @@ class FirebaseService {
     await batch.commit();
   }
 
+  // ── Day records ───────────────────────────────────────────────────────────
+
+  DocumentReference _dayRecordDoc(String date) =>
+      _db.collection('day_records').doc(date);
+
+  /// Called at midnight to stamp the new day into Firestore.
+  Future<void> initializeDay(String date) async {
+    await _dayRecordDoc(date).set({
+      'date': date,
+      'initializedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  // ── Admin unlocks ─────────────────────────────────────────────────────────
+
+  DocumentReference _adminUnlockDoc(String date) =>
+      _db.collection('admin_unlocks').doc(date);
+
+  /// Returns true if an admin has unlocked [date] for editing.
+  Future<bool> isAdminUnlocked(String date) async {
+    final doc = await _adminUnlockDoc(date).get();
+    if (!doc.exists) return false;
+    final data = doc.data() as Map<String, dynamic>;
+    return data['unlocked'] as bool? ?? false;
+  }
+
+  Stream<bool> adminUnlockStream(String date) {
+    return _adminUnlockDoc(date).snapshots().map((doc) {
+      if (!doc.exists) return false;
+      final data = doc.data() as Map<String, dynamic>;
+      return data['unlocked'] as bool? ?? false;
+    });
+  }
+
+  Future<void> setAdminUnlock(String date, {required bool unlock}) async {
+    await _adminUnlockDoc(date).set({
+      'date': date,
+      'unlocked': unlock,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'updatedBy': 'vansh',
+    }, SetOptions(merge: true));
+  }
+
   // ── Completions ───────────────────────────────────────────────────────────
 
   DocumentReference _completionDoc(String memberId, String date) =>
@@ -105,7 +156,7 @@ class FirebaseService {
     }, SetOptions(merge: true));
   }
 
-  // ── Members stats ─────────────────────────────────────────────────────────
+  // ── Members stats (today + any date) ─────────────────────────────────────
 
   Future<Map<String, Map<String, TaskStatus>>> fetchAllMembersDayCompletions(
       String date) async {
@@ -118,7 +169,6 @@ class FirebaseService {
 
   Stream<Map<String, Map<String, TaskStatus>>> allMembersDayStream(
       String date) {
-    // Combine streams for all members
     return _db
         .collection('completions')
         .where('date', isEqualTo: date)
@@ -163,24 +213,68 @@ class FirebaseService {
     return result;
   }
 
-  // ── Streak ────────────────────────────────────────────────────────────────
+  // ── Streaks (persisted in Firestore for fast reads) ───────────────────────
 
+  Future<void> saveStreak(String memberId, int streak) async {
+    await _db.collection('streaks').doc(memberId).set({
+      'memberId': memberId,
+      'streak': streak,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<Map<String, int>> fetchAllStreaks() async {
+    final snap = await _db.collection('streaks').get();
+    final result = <String, int>{};
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      result[data['memberId'] as String] = data['streak'] as int? ?? 0;
+    }
+    return result;
+  }
+
+  Stream<Map<String, int>> streaksStream() {
+    return _db.collection('streaks').snapshots().map((snap) {
+      final result = <String, int>{};
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        result[data['memberId'] as String] = data['streak'] as int? ?? 0;
+      }
+      return result;
+    });
+  }
+
+  /// Recalculate streak from Firestore history (looks back up to 90 days).
   Future<int> calculateStreak(String memberId, List<DailyTask> tasks) async {
+    if (tasks.isEmpty) return 0;
     int streak = 0;
     DateTime day = DateTime.now();
     final startDate = DateTime(2026, 7, 12);
-
-    while (!day.isBefore(startDate)) {
+    // Skip today if not yet complete — streak counts fully-done days
+    // (start checking from today so partial days still count)
+    for (int i = 0; i < 90; i++) {
+      if (day.isBefore(startDate)) break;
       final dateStr = dateKey(day);
       final completions = await fetchDayCompletions(memberId, dateStr);
-      final completed = completions.values
-          .where((s) => s == TaskStatus.completed)
-          .length;
-      final total = tasks.length;
-      if (total == 0 || completed < total) break;
-      streak++;
+      final completed =
+          completions.values.where((s) => s == TaskStatus.completed).length;
+      if (completed < tasks.length) {
+        // today with pending tasks still counts as active — skip only if it's
+        // a past day with < 100%
+        if (dateStr != todayKey) break;
+      } else {
+        streak++;
+      }
       day = day.subtract(const Duration(days: 1));
     }
     return streak;
+  }
+
+  /// Recalculate streaks for all members and persist them.
+  Future<void> recalculateAndSaveAllStreaks(List<DailyTask> tasks) async {
+    for (final member in Member.all) {
+      final streak = await calculateStreak(member.id, tasks);
+      await saveStreak(member.id, streak);
+    }
   }
 }

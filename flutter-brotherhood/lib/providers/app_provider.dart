@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import '../models/member.dart';
@@ -6,7 +7,7 @@ import '../models/task.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 
-class AppProvider extends ChangeNotifier {
+class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   final FirebaseService _firebase = FirebaseService();
   FirebaseService get firebase => _firebase;
   final NotificationService _notifications = NotificationService();
@@ -19,6 +20,17 @@ class AppProvider extends ChangeNotifier {
   Map<String, int> _streaks = {};
   bool _loading = true;
 
+  // ── History / locking ─────────────────────────────────────────────────────
+  String? _historyDate;
+  Map<String, Map<String, TaskStatus>> _historyData = {};
+  bool _historyLoading = false;
+  bool _historyDateAdminUnlocked = false;
+
+  // ── Day-change detection ──────────────────────────────────────────────────
+  String _lastKnownDate = '';
+
+  // ── Getters ───────────────────────────────────────────────────────────────
+
   Member? get currentMember => _currentMember;
   List<DailyTask> get tasks => _tasks;
   Map<String, TaskStatus> get todayCompletions => _todayCompletions;
@@ -28,14 +40,33 @@ class AppProvider extends ChangeNotifier {
   bool get loading => _loading;
   bool get isAdmin => _currentMember?.isAdmin ?? false;
 
-  String get todayKey =>
-      DateFormat('yyyy-MM-dd').format(DateTime.now());
+  String? get historyDate => _historyDate;
+  Map<String, Map<String, TaskStatus>> get historyData => _historyData;
+  bool get historyLoading => _historyLoading;
+  bool get historyDateAdminUnlocked => _historyDateAdminUnlocked;
 
-  // ── Init ──────────────────────────────────────────────────────────────────
+  String get todayKey => DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+  /// True when a date is before today.
+  bool isDateLocked(String date) => FirebaseService.isDateLocked(date);
+
+  /// Can the current user edit tasks for [date]?
+  /// - Today: always yes
+  /// - Past + admin-unlocked + user is admin: yes
+  /// - Past otherwise: no
+  bool canEditDate(String date) {
+    if (!isDateLocked(date)) return true; // today
+    return isAdmin && _historyDateAdminUnlocked;
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   Future<void> init() async {
     _loading = true;
     notifyListeners();
+
+    WidgetsBinding.instance.addObserver(this);
+    _lastKnownDate = todayKey;
 
     final prefs = await SharedPreferences.getInstance();
     final savedId = prefs.getString('member_id');
@@ -53,6 +84,44 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkDayChange();
+    }
+  }
+
+  Future<void> _checkDayChange() async {
+    final currentDate = todayKey;
+    if (currentDate != _lastKnownDate) {
+      _lastKnownDate = currentDate;
+      await _refreshForNewDay(currentDate);
+    }
+  }
+
+  /// Triggered automatically when the calendar flips to a new day.
+  Future<void> _refreshForNewDay(String date) async {
+    // Mark the new day in Firestore
+    await _firebase.initializeDay(date);
+    // Recalculate streaks
+    await _firebase.recalculateAndSaveAllStreaks(_tasks);
+    // Reload app state fresh
+    _todayCompletions = {};
+    _allMembersToday = {};
+    await Future.wait([
+      _loadTodayCompletions(),
+      _loadAllMembersToday(),
+      _loadStreaks(),
+    ]);
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   Future<void> selectMember(Member member) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('member_id', member.id);
@@ -66,8 +135,10 @@ class AppProvider extends ChangeNotifier {
       _loadTasks(),
       _loadTodayCompletions(),
       _loadAllMembersToday(),
+      _loadStreaks(),
     ]);
-    _loadStreaks();
+    // Mark today in Firestore (idempotent)
+    _firebase.initializeDay(todayKey);
     notifyListeners();
   }
 
@@ -107,7 +178,7 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Completions ───────────────────────────────────────────────────────────
+  // ── Today completions ─────────────────────────────────────────────────────
 
   Future<void> _loadTodayCompletions() async {
     if (_currentMember == null) return;
@@ -130,10 +201,15 @@ class AppProvider extends ChangeNotifier {
     await _firebase.setTaskStatus(
         _currentMember!.id, todayKey, taskId, status);
     _todayCompletions[taskId] = status;
+    // Recalculate streak live
+    final streak =
+        await _firebase.calculateStreak(_currentMember!.id, _tasks);
+    await _firebase.saveStreak(_currentMember!.id, streak);
+    _streaks[_currentMember!.id] = streak;
     notifyListeners();
   }
 
-  // ── All members ───────────────────────────────────────────────────────────
+  // ── All members (today) ───────────────────────────────────────────────────
 
   Future<void> _loadAllMembersToday() async {
     _allMembersToday =
@@ -159,10 +235,74 @@ class AppProvider extends ChangeNotifier {
   // ── Streaks ───────────────────────────────────────────────────────────────
 
   Future<void> _loadStreaks() async {
-    for (final member in Member.all) {
-      _streaks[member.id] =
-          await _firebase.calculateStreak(member.id, _tasks);
+    // Try fast path: persisted streaks
+    final persisted = await _firebase.fetchAllStreaks();
+    if (persisted.isNotEmpty) {
+      _streaks = persisted;
+      notifyListeners();
+      return;
     }
+    // Fallback: recalculate and persist
+    for (final member in Member.all) {
+      final s = await _firebase.calculateStreak(member.id, _tasks);
+      _streaks[member.id] = s;
+      await _firebase.saveStreak(member.id, s);
+    }
+    notifyListeners();
+  }
+
+  void listenStreaks() {
+    _firebase.streaksStream().listen((data) {
+      _streaks = data;
+      notifyListeners();
+    });
+  }
+
+  // ── History ───────────────────────────────────────────────────────────────
+
+  Future<void> loadHistoryDate(String date) async {
+    _historyDate = date;
+    _historyLoading = true;
+    _historyData = {};
+    notifyListeners();
+
+    final results = await Future.wait([
+      _firebase.fetchAllMembersDayCompletions(date),
+      _firebase.isAdminUnlocked(date),
+    ]);
+
+    _historyData = results[0] as Map<String, Map<String, TaskStatus>>;
+    _historyDateAdminUnlocked = results[1] as bool;
+    _historyLoading = false;
+    notifyListeners();
+  }
+
+  Future<void> toggleHistoryAdminUnlock(String date) async {
+    if (!isAdmin) return;
+    final newState = !_historyDateAdminUnlocked;
+    await _firebase.setAdminUnlock(date, unlock: newState);
+    _historyDateAdminUnlocked = newState;
+    notifyListeners();
+  }
+
+  /// Admin editing a past day's task for any member.
+  Future<void> setHistoryTaskStatus(
+      String memberId, String date, String taskId, TaskStatus status) async {
+    if (!isAdmin) return;
+    await _firebase.setTaskStatus(memberId, date, taskId, status);
+    _historyData[memberId] ??= {};
+    _historyData[memberId]![taskId] = status;
+    // Recalculate streak for affected member
+    final streak = await _firebase.calculateStreak(memberId, _tasks);
+    await _firebase.saveStreak(memberId, streak);
+    _streaks[memberId] = streak;
+    notifyListeners();
+  }
+
+  void clearHistory() {
+    _historyDate = null;
+    _historyData = {};
+    _historyDateAdminUnlocked = false;
     notifyListeners();
   }
 
@@ -192,10 +332,8 @@ class AppProvider extends ChangeNotifier {
   List<Member> get leaderboardByCompletion {
     final members = List<Member>.from(Member.all);
     members.sort((a, b) {
-      final aP =
-          completionPercent(_allMembersToday[a.id] ?? {});
-      final bP =
-          completionPercent(_allMembersToday[b.id] ?? {});
+      final aP = completionPercent(_allMembersToday[a.id] ?? {});
+      final bP = completionPercent(_allMembersToday[b.id] ?? {});
       return bP.compareTo(aP);
     });
     return members;
