@@ -122,7 +122,7 @@ class FirebaseService {
       'taskCount': tasks.length,
     }, SetOptions(merge: true));
 
-    if (anyWrite || true) await batch.commit(); // always write the day record
+    await batch.commit(); // always write the day record (marks day as seeded)
   }
 
   // ── Admin unlocks ─────────────────────────────────────────────────────────

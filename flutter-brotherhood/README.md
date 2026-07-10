@@ -1,4 +1,4 @@
-# Brotherhood 🏆
+l# Brotherhood 🏆
 
 > A daily discipline tracker for four friends — synced in real time via Firebase.
 

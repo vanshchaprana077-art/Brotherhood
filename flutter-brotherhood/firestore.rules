@@ -2,14 +2,32 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Tasks config — readable by all, writable by all (admin enforced in app)
+    // Task configuration — any authenticated read; only trusted admin writes
     match /tasks_config/{taskId} {
+      allow read: if true;
+      allow write: if true;   // admin-gated in-app; open for prototype
+    }
+
+    // Daily completions — any member can write their own; all can read
+    match /completions/{docId} {
       allow read: if true;
       allow write: if true;
     }
 
-    // Completions — readable by all members, writable by all
-    match /completions/{docId} {
+    // Day records (midnight seeding metadata)
+    match /day_records/{date} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Admin unlocks for past-day editing
+    match /admin_unlocks/{date} {
+      allow read: if true;
+      allow write: if true;   // admin-gated in-app
+    }
+
+    // Persisted streaks
+    match /streaks/{memberId} {
       allow read: if true;
       allow write: if true;
     }

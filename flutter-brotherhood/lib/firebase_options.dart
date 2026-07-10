@@ -1,12 +1,13 @@
 // ──────────────────────────────────────────────────────────────────────────────
-// IMPORTANT: Replace this file with the real firebase_options.dart generated
-// by the FlutterFire CLI after you connect your Firebase project.
+// ⚠️  IMPORTANT: Replace this file with the real firebase_options.dart generated
+//    by the FlutterFire CLI BEFORE distributing to your friends.
 //
-// Run:
-//   flutter pub global activate flutterfire_cli
-//   flutterfire configure --project=<your-firebase-project-id>
+//    Run (after creating your Firebase project):
+//      flutter pub global activate flutterfire_cli
+//      flutterfire configure --project=<your-firebase-project-id>
 //
-// This will regenerate this file with your real credentials.
+//    Until then the app will build and launch, but all Firestore calls will
+//    fail because these are build-only placeholder credentials.
 // ──────────────────────────────────────────────────────────────────────────────
 
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
@@ -20,18 +21,18 @@ class DefaultFirebaseOptions {
         return android;
       default:
         throw UnsupportedError(
-          'Brotherhood only targets Android. '
+          'Brotherhood only targets Android.\n'
           'Run: flutterfire configure --project=<your-project-id>',
         );
     }
   }
 
-  // ⚠️  PLACEHOLDER — replace with your real values from flutterfire configure
+  // ⚠️  PLACEHOLDER — replace via: flutterfire configure
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'YOUR_API_KEY',
-    appId: 'YOUR_APP_ID',
-    messagingSenderId: 'YOUR_SENDER_ID',
-    projectId: 'YOUR_PROJECT_ID',
-    storageBucket: 'YOUR_PROJECT_ID.appspot.com',
+    apiKey: 'AIzaSyPlaceholderKeyForBuildOnlyNotForRuntime01',
+    appId: '1:000000000000:android:0000000000000000',
+    messagingSenderId: '000000000000',
+    projectId: 'brotherhood-placeholder',
+    storageBucket: 'brotherhood-placeholder.appspot.com',
   );
 }
