@@ -76,12 +76,53 @@ class FirebaseService {
   DocumentReference _dayRecordDoc(String date) =>
       _db.collection('day_records').doc(date);
 
-  /// Called at midnight to stamp the new day into Firestore.
-  Future<void> initializeDay(String date) async {
-    await _dayRecordDoc(date).set({
+  /// Seeds the daily checklist for every member for [date].
+  ///
+  /// The task definitions come from [tasks] (the single admin-managed list).
+  /// Calling this more than once for the same date is safe — a `seeded` flag
+  /// prevents double-seeding, and `setTaskStatus` (merge) always wins over
+  /// whatever was seeded, so user progress is never overwritten.
+  Future<void> initializeDay(String date, List<DailyTask> tasks) async {
+    if (tasks.isEmpty) return;
+
+    // ── Idempotency guard ────────────────────────────────────────────────
+    final record = await _dayRecordDoc(date).get();
+    if (record.exists) {
+      final data = record.data() as Map<String, dynamic>;
+      if (data['seeded'] == true) return; // already done
+    }
+
+    // ── Seed every member's completion doc ───────────────────────────────
+    // Build the initial task map: every task starts as pending.
+    final taskMap = {for (final t in tasks) t.id: TaskStatus.pending.name};
+
+    // Read all 4 members' docs first so we only write the ones that don't
+    // exist yet (avoids overwriting a doc the user has already started on).
+    final batch = _db.batch();
+    bool anyWrite = false;
+    for (final member in Member.all) {
+      final ref = _completionDoc(member.id, date);
+      final snap = await ref.get();
+      if (!snap.exists) {
+        batch.set(ref, {
+          'memberId': member.id,
+          'date': date,
+          'tasks': taskMap,
+          'seededAt': FieldValue.serverTimestamp(),
+        });
+        anyWrite = true;
+      }
+    }
+
+    // ── Mark day as seeded ───────────────────────────────────────────────
+    batch.set(_dayRecordDoc(date), {
       'date': date,
-      'initializedAt': FieldValue.serverTimestamp(),
+      'seeded': true,
+      'seededAt': FieldValue.serverTimestamp(),
+      'taskCount': tasks.length,
     }, SetOptions(merge: true));
+
+    if (anyWrite || true) await batch.commit(); // always write the day record
   }
 
   // ── Admin unlocks ─────────────────────────────────────────────────────────

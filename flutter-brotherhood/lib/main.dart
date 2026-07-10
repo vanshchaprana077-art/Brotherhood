@@ -25,10 +25,13 @@ void callbackDispatcher() {
       final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
       if (taskName == _kDailyReset) {
-        // 1. Stamp today in Firestore
-        await service.initializeDay(today);
-        // 2. Recalculate & persist streaks for all members
-        await service.recalculateAndSaveAllStreaks(DailyTask.defaults);
+        // 1. Fetch the admin-managed task list from Firestore (single source of
+        //    truth — admin defines it once; it repeats automatically every day).
+        final tasks = await service.fetchTasks();
+        // 2. Seed the fresh daily checklist for every member (idempotent).
+        await service.initializeDay(today, tasks);
+        // 3. Recalculate & persist streaks for all members.
+        await service.recalculateAndSaveAllStreaks(tasks);
       }
     } catch (_) {
       // Swallow — background tasks must not throw

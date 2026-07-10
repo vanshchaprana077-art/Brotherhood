@@ -101,8 +101,8 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Triggered automatically when the calendar flips to a new day.
   Future<void> _refreshForNewDay(String date) async {
-    // Mark the new day in Firestore
-    await _firebase.initializeDay(date);
+    // Seed the fresh daily checklist using the admin-defined task list
+    await _firebase.initializeDay(date, _tasks);
     // Recalculate streaks
     await _firebase.recalculateAndSaveAllStreaks(_tasks);
     // Reload app state fresh
@@ -131,14 +131,16 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _loadAll() async {
+    // Tasks must be loaded before we can seed today's checklist.
+    await _loadTasks();
     await Future.wait([
-      _loadTasks(),
       _loadTodayCompletions(),
       _loadAllMembersToday(),
       _loadStreaks(),
     ]);
-    // Mark today in Firestore (idempotent)
-    _firebase.initializeDay(todayKey);
+    // Seed today's fresh checklist for all members (idempotent — skips if
+    // already seeded; never overwrites completions the user has already made).
+    _firebase.initializeDay(todayKey, _tasks);
     notifyListeners();
   }
 
