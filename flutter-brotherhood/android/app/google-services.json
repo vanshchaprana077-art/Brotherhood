@@ -1,0 +1,38 @@
+{
+  "__INSTRUCTIONS__": "REPLACE this file with the real google-services.json downloaded from your Firebase project console.",
+  "__STEPS__": [
+    "1. Go to https://console.firebase.google.com",
+    "2. Create a new project (or open existing)",
+    "3. Add an Android app with package name: com.brotherhood.app",
+    "4. Download google-services.json",
+    "5. Place it here (replace this file)",
+    "6. Also run: flutterfire configure --project=<your-project-id>"
+  ],
+  "project_info": {
+    "project_number": "PLACEHOLDER",
+    "project_id": "PLACEHOLDER",
+    "storage_bucket": "PLACEHOLDER.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:PLACEHOLDER:android:PLACEHOLDER",
+        "android_client_info": {
+          "package_name": "com.brotherhood.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "PLACEHOLDER"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

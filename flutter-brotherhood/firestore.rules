@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Tasks config — readable by all, writable by all (admin enforced in app)
+    match /tasks_config/{taskId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Completions — readable by all members, writable by all
+    match /completions/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
