@@ -279,7 +279,7 @@ class _TaskCard extends StatelessWidget {
     required this.onMiss,
   });
 
-  final task;
+  final DailyTask task;
   final TaskStatus status;
   final VoidCallback onComplete;
   final VoidCallback onMiss;
@@ -297,8 +297,6 @@ class _TaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(

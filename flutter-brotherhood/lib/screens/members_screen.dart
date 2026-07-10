@@ -65,7 +65,7 @@ class _MemberCard extends StatefulWidget {
   final int completed;
   final int total;
   final int streak;
-  final List tasks;
+  final List<DailyTask> tasks;
   final Map<String, TaskStatus> completions;
   final bool isCurrentUser;
 
@@ -191,7 +191,7 @@ class _MemberCardState extends State<_MemberCard> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${widget.completed}/${widget.total} tasks · 🔥 ${ widget.streak} day streak',
+                          '${widget.completed}/${widget.total} tasks · 🔥 ${widget.streak} day streak',
                           style: const TextStyle(
                             fontSize: 13,
                             color: Colors.white54,

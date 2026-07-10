@@ -98,14 +98,14 @@ class AdminScreen extends StatelessWidget {
                           _showTaskDialog(context, provider, task: task),
                       onDelete: () =>
                           _confirmDelete(context, provider, task),
-                    ).animate().fadeIn(delay: (i * 60).ms);
+                    );
                   },
                   onReorder: (oldIndex, newIndex) {
                     if (newIndex > oldIndex) newIndex--;
-                    final tasks = List.from(provider.tasks);
+                    final tasks = List<DailyTask>.from(provider.tasks);
                     final item = tasks.removeAt(oldIndex);
                     tasks.insert(newIndex, item);
-                    // Optimistic UI update
+                    provider.firebase.reorderTasks(tasks);
                   },
                 ),
 
