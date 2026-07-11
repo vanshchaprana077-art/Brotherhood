@@ -26,6 +26,7 @@ class _IdentitySelectionScreenState extends State<IdentitySelectionScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -34,12 +35,17 @@ class _IdentitySelectionScreenState extends State<IdentitySelectionScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 16),
-              Text('🏆',
-                  style: const TextStyle(fontSize: 56))
+
+              const Text(
+                '🏆',
+                style: TextStyle(fontSize: 56),
+              )
                   .animate()
                   .fadeIn(duration: 400.ms)
                   .scale(begin: const Offset(0.5, 0.5)),
+
               const SizedBox(height: 24),
+
               Text(
                 'Welcome to\nBrotherhood',
                 style: GoogleFonts.poppins(
@@ -49,43 +55,65 @@ class _IdentitySelectionScreenState extends State<IdentitySelectionScreen> {
                 ),
               )
                   .animate()
-                  .fadeIn(delay: 200.ms, duration: 500.ms)
+                  .fadeIn(delay: 200.ms)
                   .slideX(begin: -0.2),
+
               const SizedBox(height: 8),
+
               Text(
                 'Daily discipline, together.',
                 style: TextStyle(
                   fontSize: 16,
                   color: theme.colorScheme.onSurface.withOpacity(0.6),
                 ),
-              ).animate().fadeIn(delay: 300.ms),
+              ),
+
               const SizedBox(height: 48),
+
               Text(
                 'Who are you?',
                 style: GoogleFonts.poppins(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
                 ),
-              ).animate().fadeIn(delay: 400.ms),
+              ),
+
               const SizedBox(height: 16),
-              ...Member.all.asMap().entries.map((entry) {
-                final i = entry.key;
-                final member = entry.value;
-                final isSelected = _selected?.id == member.id;
-                return _MemberTile(
-                  member: member,
-                  isSelected: isSelected,
-                  onTap: () => setState(() => _selected = member),
-                ).animate().fadeIn(delay: (400 + i * 80).ms).slideY(begin: 0.2);
-              }),
-              const Spacer(),
+
+              Expanded(
+                child: ListView.builder(
+                  itemCount: Member.all.length,
+                  itemBuilder: (context, index) {
+                    final member = Member.all[index];
+                    final isSelected = _selected?.id == member.id;
+
+                    return _MemberTile(
+                      member: member,
+                      isSelected: isSelected,
+                      onTap: () {
+                        setState(() {
+                          _selected = member;
+                        });
+                      },
+                    )
+                        .animate()
+                        .fadeIn(delay: (400 + index * 80).ms)
+                        .slideY(begin: 0.2);
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
               AnimatedOpacity(
                 opacity: _selected != null ? 1.0 : 0.4,
                 duration: const Duration(milliseconds: 300),
                 child: SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _selected != null && !_saving ? _confirm : null,
+                    onPressed: _selected != null && !_saving
+                        ? _confirm
+                        : null,
                     child: _saving
                         ? const SizedBox(
                             height: 20,
@@ -95,10 +123,10 @@ class _IdentitySelectionScreenState extends State<IdentitySelectionScreen> {
                               color: Colors.white,
                             ),
                           )
-                        : const row('Enter Brotherhood'),
+                        : const Text('Enter Brotherhood'),
                   ),
                 ),
-              ).animate().fadeIn(delay: 800.ms),
+              ),
             ],
           ),
         ),
@@ -128,14 +156,19 @@ class _MemberTile extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 16,
+        ),
         decoration: BoxDecoration(
           color: isSelected
               ? color.withOpacity(0.15)
               : const Color(0xFF1A1A2E),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: isSelected ? color : Colors.white.withOpacity(0.08),
+            color: isSelected
+                ? color
+                : Colors.white.withOpacity(0.08),
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -151,11 +184,15 @@ class _MemberTile extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: isSelected ? Colors.white : Colors.white70,
+                  color: isSelected
+                      ? Colors.white
+                      : Colors.white70,
                 ),
               ),
             ),
+
             const SizedBox(width: 16),
+
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -167,20 +204,25 @@ class _MemberTile extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+
                   if (member.isAdmin)
                     Text(
                       'Admin',
                       style: TextStyle(
                         fontSize: 12,
                         color: theme.colorScheme.secondary,
-                        fontWeight: FontWeight.w500,
                       ),
                     ),
                 ],
               ),
             ),
+
             if (isSelected)
-              Icon(Icons.check_circle_rounded, color: color, size: 24),
+              Icon(
+                Icons.check_circle_rounded,
+                color: color,
+                size: 24,
+              ),
           ],
         ),
       ),
