@@ -29,10 +29,13 @@ class NotificationService {
 
     for (final task in tasks) {
       if (task.notificationTime == null) continue;
+
       final parts = task.notificationTime!.split(':');
       if (parts.length != 2) continue;
+
       final hour = int.tryParse(parts[0]);
       final minute = int.tryParse(parts[1]);
+
       if (hour == null || minute == null) continue;
 
       await _scheduleDaily(
@@ -53,6 +56,7 @@ class NotificationService {
     required int minute,
   }) async {
     final now = tz.TZDateTime.now(tz.local);
+
     var scheduledDate = tz.TZDateTime(
       tz.local,
       now.year,
@@ -61,6 +65,7 @@ class NotificationService {
       hour,
       minute,
     );
+
     if (scheduledDate.isBefore(now)) {
       scheduledDate = scheduledDate.add(const Duration(days: 1));
     }
@@ -80,6 +85,8 @@ class NotificationService {
           icon: '@mipmap/ic_launcher',
         ),
       ),
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       matchDateTimeComponents: DateTimeComponents.time,
     );
