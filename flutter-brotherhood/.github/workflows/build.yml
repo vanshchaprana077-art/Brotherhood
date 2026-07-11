@@ -1,0 +1,80 @@
+name: Build Brotherhood APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:          # allow manual runs
+
+jobs:
+  build:
+    name: Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ───────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Java ───────────────────────────────────────────────────────────────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ── Flutter ────────────────────────────────────────────────────────────
+      - name: Set up Flutter 3.22.3
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.3'
+          channel: stable
+          cache: true
+
+      # ── Firebase credentials (optional – real config via repo secret) ──────
+      # To connect to your real Firebase project:
+      #   1. Download google-services.json from Firebase Console
+      #   2. Base-64 encode it:  base64 google-services.json
+      #   3. Add the result as a GitHub repo secret named GOOGLE_SERVICES_JSON
+      #   4. Similarly, paste the contents of firebase_options.dart as
+      #      secret FIREBASE_OPTIONS_DART and uncomment the step below.
+      #
+      # Without the secret the build uses the placeholder credentials
+      # (APK installs and launches but Firebase is non-functional).
+      - name: Inject real Firebase google-services.json (if secret is set)
+        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
+        working-directory: flutter-brotherhood/android/app
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' | base64 --decode \
+            > google-services.json
+
+      - name: Inject real firebase_options.dart (if secret is set)
+        if: ${{ secrets.FIREBASE_OPTIONS_DART != '' }}
+        working-directory: flutter-brotherhood/lib
+        run: |
+          echo '${{ secrets.FIREBASE_OPTIONS_DART }}' > firebase_options.dart
+
+      # ── Dependencies ───────────────────────────────────────────────────────
+      - name: Install pub dependencies
+        working-directory: flutter-brotherhood
+        run: flutter pub get
+
+      # ── Static analysis ────────────────────────────────────────────────────
+      - name: Flutter analyze
+        working-directory: flutter-brotherhood
+        run: flutter analyze --no-fatal-warnings
+
+      # ── Build ──────────────────────────────────────────────────────────────
+      - name: Build release APK
+        working-directory: flutter-brotherhood
+        run: flutter build apk --release
+
+      # ── Upload artifact ────────────────────────────────────────────────────
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: brotherhood-release-${{ github.run_number }}
+          path: flutter-brotherhood/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
