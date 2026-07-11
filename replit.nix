@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.flutter329
     pkgs.git
     pkgs.curl
     pkgs.wget

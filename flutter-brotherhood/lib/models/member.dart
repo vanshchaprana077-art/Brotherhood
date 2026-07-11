@@ -9,11 +9,11 @@ class Member {
     this.isAdmin = false,
   });
 
+  /// The three Brotherhood members. No fourth member.
   static const List<Member> all = [
     Member(id: 'vansh', name: 'Vansh', isAdmin: true),
-    Member(id: 'piyush', name: 'Piyush'),
     Member(id: 'govind', name: 'Govind'),
-    Member(id: 'member4', name: 'Member 4'),
+    Member(id: 'piyush', name: 'Piyush'),
   ];
 
   static Member? fromId(String id) {

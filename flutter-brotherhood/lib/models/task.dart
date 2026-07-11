@@ -5,56 +5,176 @@ class DailyTask {
   final String? notificationTime; // "HH:mm" format, null = no notification
   final bool isDefault;
 
+  /// Which members this task applies to. Empty or null list means it
+  /// applies to everyone. Used so Vansh can have a different task set
+  /// than Govind & Piyush.
+  final List<String>? appliesTo;
+
   const DailyTask({
     required this.id,
     required this.title,
     required this.icon,
     this.notificationTime,
     this.isDefault = false,
+    this.appliesTo,
   });
 
+  bool appliesToMember(String memberId) =>
+      appliesTo == null || appliesTo!.isEmpty || appliesTo!.contains(memberId);
+
+  /// Canonical task set. Common tasks apply to everyone; a handful are
+  /// scoped to specific members (Water target differs, and Vansh carries
+  /// extra tasks that Govind & Piyush do not have).
   static List<DailyTask> get defaults => [
+        // ── Common tasks (everyone) ──────────────────────────────────────
         const DailyTask(
-          id: 'drink_water',
-          title: 'Drink Water',
-          icon: '💧',
-          notificationTime: '08:00',
+          id: 'wake_up_early',
+          title: 'Wake Up Early',
+          icon: '⏰',
+          notificationTime: '06:00',
           isDefault: true,
         ),
         const DailyTask(
-          id: 'workout',
-          title: 'Workout',
+          id: 'gym_workout',
+          title: 'Gym Workout',
           icon: '🏋️',
-          notificationTime: '07:00',
+          notificationTime: '17:00',
           isDefault: true,
         ),
         const DailyTask(
-          id: 'study',
-          title: 'Study',
-          icon: '📚',
-          notificationTime: '10:00',
+          id: 'screen_time',
+          title: 'Screen Time Under 5 Hrs',
+          icon: '📱',
           isDefault: true,
         ),
         const DailyTask(
-          id: 'read_book',
-          title: 'Read Book',
-          icon: '📖',
-          notificationTime: null,
+          id: 'social_media',
+          title: 'Social Media Under 3 Hrs',
+          icon: '📲',
           isDefault: true,
         ),
         const DailyTask(
-          id: 'sleep_before_11',
+          id: 'avoid_phone',
+          title: 'Avoid Phone After 11 PM',
+          icon: '🌙',
+          notificationTime: '23:00',
+          isDefault: true,
+        ),
+        const DailyTask(
+          id: 'sleep_on_time',
           title: 'Sleep Before 11 PM',
           icon: '😴',
           notificationTime: '22:30',
           isDefault: true,
         ),
         const DailyTask(
-          id: 'no_smoking',
-          title: 'No Smoking',
-          icon: '🚭',
-          notificationTime: null,
+          id: 'meditation',
+          title: 'Meditation',
+          icon: '🧘',
+          notificationTime: '06:30',
           isDefault: true,
+        ),
+        const DailyTask(
+          id: 'journaling',
+          title: 'Journaling',
+          icon: '📓',
+          notificationTime: '21:30',
+          isDefault: true,
+        ),
+        const DailyTask(
+          id: 'read_book',
+          title: 'Read Book',
+          icon: '📖',
+          isDefault: true,
+        ),
+        const DailyTask(
+          id: 'cold_shower',
+          title: 'Cold Shower',
+          icon: '🚿',
+          isDefault: true,
+        ),
+
+        // ── Water (target differs per member) ────────────────────────────
+        const DailyTask(
+          id: 'water_gp',
+          title: 'Drink Water (4L)',
+          icon: '💧',
+          notificationTime: '08:00',
+          isDefault: true,
+          appliesTo: ['govind', 'piyush'],
+        ),
+        const DailyTask(
+          id: 'water_vansh',
+          title: 'Drink Water (5L)',
+          icon: '💧',
+          notificationTime: '08:00',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+
+        // ── Vansh-only tasks ──────────────────────────────────────────────
+        const DailyTask(
+          id: 'adequate_meals',
+          title: '3 Adequate Meals',
+          icon: '🍽️',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+        const DailyTask(
+          id: 'dry_fruits',
+          title: 'Eat Dry Fruits',
+          icon: '🥜',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+        const DailyTask(
+          id: 'business',
+          title: 'Business',
+          icon: '💼',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+        const DailyTask(
+          id: 'looksmaxing',
+          title: 'Looksmaxing',
+          icon: '✨',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+        const DailyTask(
+          id: 'pray_calm_kind',
+          title: 'Pray, Be Calm, Be Kind',
+          icon: '🙏',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+        const DailyTask(
+          id: 'study',
+          title: 'Study',
+          icon: '📚',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+        const DailyTask(
+          id: 'coding',
+          title: 'Coding',
+          icon: '💻',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+        const DailyTask(
+          id: 'shoulder_workout',
+          title: 'Shoulder Workout',
+          icon: '💪',
+          isDefault: true,
+          appliesTo: ['vansh'],
+        ),
+        const DailyTask(
+          id: 'learn_french',
+          title: 'Learn French',
+          icon: '🇫🇷',
+          isDefault: true,
+          appliesTo: ['vansh'],
         ),
       ];
 
@@ -64,7 +184,9 @@ class DailyTask {
     String? icon,
     String? notificationTime,
     bool? isDefault,
+    List<String>? appliesTo,
     bool clearNotificationTime = false,
+    bool clearAppliesTo = false,
   }) {
     return DailyTask(
       id: id ?? this.id,
@@ -73,6 +195,7 @@ class DailyTask {
       notificationTime:
           clearNotificationTime ? null : (notificationTime ?? this.notificationTime),
       isDefault: isDefault ?? this.isDefault,
+      appliesTo: clearAppliesTo ? null : (appliesTo ?? this.appliesTo),
     );
   }
 
@@ -82,6 +205,7 @@ class DailyTask {
         'icon': icon,
         'notificationTime': notificationTime,
         'isDefault': isDefault,
+        'appliesTo': appliesTo,
       };
 
   factory DailyTask.fromMap(Map<String, dynamic> map) => DailyTask(
@@ -90,6 +214,7 @@ class DailyTask {
         icon: map['icon'] as String? ?? '✅',
         notificationTime: map['notificationTime'] as String?,
         isDefault: map['isDefault'] as bool? ?? false,
+        appliesTo: (map['appliesTo'] as List?)?.map((e) => e.toString()).toList(),
       );
 
   @override

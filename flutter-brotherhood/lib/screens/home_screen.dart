@@ -5,7 +5,14 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:percent_indicator/percent_indicator.dart';
 import '../providers/app_provider.dart';
 import '../models/task.dart';
+import 'calendar_screen.dart';
+import 'history_screen.dart';
+import 'weekly_progress_screen.dart';
+import 'admin_login_screen.dart';
 
+/// The "Tasks" tab. Doubles as the home dashboard (today's progress, day
+/// counter, score, streaks) plus the daily checklist. Calendar & History
+/// are reachable from the AppBar instead of their own bottom-tab slot.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -19,39 +26,73 @@ class HomeScreen extends StatelessWidget {
         final now = DateTime.now();
         final dateStr = DateFormat('EEEE, MMMM d').format(now);
         final completions = provider.todayCompletions;
-        final percent = provider.completionPercent(completions);
-        final remaining = provider.remainingCount(completions);
-        final streak = provider.streaks[member.id] ?? 0;
+        final percent = provider.completionPercent(completions, memberId: member.id);
+        final remaining = provider.remainingCount(completions, memberId: member.id);
+        final streak = provider.streaks[member.id];
+        final myTasks = provider.tasksForMember(member.id);
 
         return Scaffold(
           appBar: AppBar(
-            title: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('🏆 '),
-                const Text('Brotherhood'),
-              ],
+            title: GestureDetector(
+              onLongPress: () => _openAdmin(context),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('🏆 '),
+                  Text('Brotherhood'),
+                ],
+              ),
             ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.camera_alt_outlined),
+                tooltip: 'Weekly Progress Photos',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const WeeklyProgressScreen()),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.calendar_month_outlined),
+                tooltip: 'Calendar',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CalendarScreen()),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.history_rounded),
+                tooltip: 'History',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const HistoryScreen()),
+                ),
+              ),
+            ],
           ),
           body: RefreshIndicator(
             onRefresh: () async {
-              await provider.init();
+              await provider.refresh();
             },
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
               children: [
-                // ── Header card ────────────────────────────────────────────
                 _HeaderCard(
                   dateStr: dateStr,
                   memberName: member.name,
                   percent: percent,
                   remaining: remaining,
-                  streak: streak,
+                  streak: streak?.current ?? 0,
+                  longestStreak: streak?.longest ?? 0,
+                  score: provider.completedCount(completions, memberId: member.id),
+                  dailyRank: provider.dailyRank,
+                  currentDay: provider.currentDayNumber,
+                  daysRemaining: provider.daysRemaining,
+                  challengeStarted: provider.challengeStarted,
                 ).animate().fadeIn(duration: 400.ms).slideY(begin: -0.1),
 
                 const SizedBox(height: 24),
 
-                // ── Tasks section ──────────────────────────────────────────
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -63,7 +104,7 @@ class HomeScreen extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '${provider.completedCount(completions)}/${provider.tasks.length}',
+                      '${provider.completedCount(completions, memberId: member.id)}/${myTasks.length}',
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.w600,
@@ -74,7 +115,7 @@ class HomeScreen extends StatelessWidget {
 
                 const SizedBox(height: 12),
 
-                if (provider.tasks.isEmpty)
+                if (myTasks.isEmpty)
                   const Center(
                     child: Padding(
                       padding: EdgeInsets.all(32),
@@ -82,17 +123,22 @@ class HomeScreen extends StatelessWidget {
                     ),
                   )
                 else
-                  ...provider.tasks.asMap().entries.map((entry) {
+                  ...myTasks.asMap().entries.map((entry) {
                     final i = entry.key;
                     final task = entry.value;
                     final status = provider.statusOf(task.id);
+                    final locked = !provider.canEditDate(provider.todayKey);
                     return _TaskCard(
                       task: task,
                       status: status,
-                      onComplete: () =>
-                          provider.setTaskStatus(task.id, TaskStatus.completed),
-                      onMiss: () =>
-                          provider.setTaskStatus(task.id, TaskStatus.missed),
+                      onComplete: locked
+                          ? null
+                          : () => provider.setTaskStatus(
+                              task.id, TaskStatus.completed),
+                      onMiss: locked
+                          ? null
+                          : () =>
+                              provider.setTaskStatus(task.id, TaskStatus.missed),
                     )
                         .animate()
                         .fadeIn(delay: (300 + i * 60).ms)
@@ -105,6 +151,13 @@ class HomeScreen extends StatelessWidget {
       },
     );
   }
+
+  void _openAdmin(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AdminLoginScreen()),
+    );
+  }
 }
 
 class _HeaderCard extends StatelessWidget {
@@ -114,6 +167,12 @@ class _HeaderCard extends StatelessWidget {
     required this.percent,
     required this.remaining,
     required this.streak,
+    required this.longestStreak,
+    required this.score,
+    required this.dailyRank,
+    required this.currentDay,
+    required this.daysRemaining,
+    required this.challengeStarted,
   });
 
   final String dateStr;
@@ -121,6 +180,12 @@ class _HeaderCard extends StatelessWidget {
   final double percent;
   final int remaining;
   final int streak;
+  final int longestStreak;
+  final int score;
+  final int dailyRank;
+  final int currentDay;
+  final int daysRemaining;
+  final bool challengeStarted;
 
   @override
   Widget build(BuildContext context) {
@@ -144,12 +209,30 @@ class _HeaderCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            dateStr,
-            style: TextStyle(
-              color: theme.colorScheme.onSurface.withOpacity(0.6),
-              fontSize: 13,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                dateStr,
+                style: TextStyle(
+                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                  fontSize: 13,
+                ),
+              ),
+              if (challengeStarted)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'Day $currentDay',
+                    style: TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700, color: color),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 4),
           Text(
@@ -159,6 +242,13 @@ class _HeaderCard extends StatelessWidget {
               fontWeight: FontWeight.bold,
             ),
           ),
+          if (!challengeStarted) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Challenge starts in $daysRemaining day${daysRemaining == 1 ? '' : 's'} 🔥',
+              style: const TextStyle(fontSize: 13, color: Colors.orangeAccent),
+            ),
+          ],
           const SizedBox(height: 20),
           Row(
             children: [
@@ -201,22 +291,83 @@ class _HeaderCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _StatRow(
-                      icon: Icons.pending_actions_rounded,
-                      label: 'Remaining',
-                      value: '$remaining tasks',
-                      color: Colors.orangeAccent,
+                      icon: Icons.star_rounded,
+                      label: "Today's Score",
+                      value: '$score pts',
+                      color: Colors.amberAccent,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
+                    _StatRow(
+                      icon: Icons.emoji_events_rounded,
+                      label: 'Daily Rank',
+                      value: dailyRank > 0 ? '#$dailyRank' : '—',
+                      color: Colors.tealAccent,
+                    ),
+                    const SizedBox(height: 10),
                     _StatRow(
                       icon: Icons.local_fire_department_rounded,
                       label: 'Streak',
-                      value: '$streak days',
+                      value: '$streak (best $longestStreak)',
                       color: Colors.deepOrangeAccent,
                     ),
                   ],
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _MiniStat(
+                  icon: Icons.pending_actions_rounded,
+                  label: 'Remaining',
+                  value: '$remaining tasks',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _MiniStat(
+                  icon: Icons.flag_rounded,
+                  label: 'Days Left',
+                  value: '$daysRemaining',
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniStat extends StatelessWidget {
+  const _MiniStat({required this.icon, required this.label, required this.value});
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: Colors.white60),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontSize: 10, color: Colors.white54)),
+                Text(value,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+              ],
+            ),
           ),
         ],
       ),
@@ -281,8 +432,8 @@ class _TaskCard extends StatelessWidget {
 
   final DailyTask task;
   final TaskStatus status;
-  final VoidCallback onComplete;
-  final VoidCallback onMiss;
+  final VoidCallback? onComplete;
+  final VoidCallback? onMiss;
 
   Color _statusColor() {
     switch (status) {
@@ -377,7 +528,7 @@ class _ActionBtn extends StatelessWidget {
   final IconData icon;
   final Color color;
   final bool isActive;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -397,7 +548,7 @@ class _ActionBtn extends StatelessWidget {
         ),
         child: Icon(
           icon,
-          color: isActive ? color : Colors.white24,
+          color: onTap == null ? Colors.white12 : (isActive ? color : Colors.white24),
           size: 18,
         ),
       ),

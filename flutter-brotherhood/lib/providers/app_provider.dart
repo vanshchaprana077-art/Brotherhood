@@ -2,10 +2,31 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
+import '../constants.dart';
 import '../models/member.dart';
 import '../models/task.dart';
+import '../models/profile.dart';
+import '../models/streak_info.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
+
+/// Wraps a future so it can never hang the UI forever. If it doesn't
+/// resolve within [duration] (default 5s) or it throws, [fallback] is
+/// returned instead. This is the core fix for the "stuck on loading
+/// forever" bug: every Firestore call the app depends on during startup
+/// goes through this so a flaky connection degrades gracefully instead of
+/// freezing the splash screen.
+Future<T> withTimeout<T>(
+  Future<T> future,
+  T fallback, {
+  Duration duration = const Duration(seconds: 5),
+}) async {
+  try {
+    return await future.timeout(duration, onTimeout: () => fallback);
+  } catch (_) {
+    return fallback;
+  }
+}
 
 class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   final FirebaseService _firebase = FirebaseService();
@@ -17,8 +38,11 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   Map<String, TaskStatus> _todayCompletions = {};
   Map<String, Map<String, TaskStatus>> _allMembersToday = {};
   Map<String, Map<String, TaskStatus>> _calendarData = {};
-  Map<String, int> _streaks = {};
+  Map<String, StreakInfo> _streaks = {};
+  MemberProfile? _profile;
+  bool _profileChecked = false;
   bool _loading = true;
+  bool _adminPanelUnlocked = false;
 
   // ── History / locking ─────────────────────────────────────────────────────
   String? _historyDate;
@@ -36,9 +60,16 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   Map<String, TaskStatus> get todayCompletions => _todayCompletions;
   Map<String, Map<String, TaskStatus>> get allMembersToday => _allMembersToday;
   Map<String, Map<String, TaskStatus>> get calendarData => _calendarData;
-  Map<String, int> get streaks => _streaks;
+  Map<String, StreakInfo> get streaks => _streaks;
+  MemberProfile? get profile => _profile;
   bool get loading => _loading;
   bool get isAdmin => _currentMember?.isAdmin ?? false;
+  bool get adminPanelUnlocked => _adminPanelUnlocked;
+
+  /// True once we've selected a member but haven't saved a profile yet —
+  /// triggers the first-time profile setup screen.
+  bool get needsProfileSetup =>
+      _currentMember != null && _profileChecked && _profile == null;
 
   String? get historyDate => _historyDate;
   Map<String, Map<String, TaskStatus>> get historyData => _historyData;
@@ -59,6 +90,25 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     return isAdmin && _historyDateAdminUnlocked;
   }
 
+  // ── Challenge timing ──────────────────────────────────────────────────────
+
+  /// 1-based day number since the challenge started. 0 if not started yet.
+  int get currentDayNumber {
+    final now = DateTime.now();
+    if (now.isBefore(AppConstants.challengeStart)) return 0;
+    return now.difference(AppConstants.challengeStart).inDays + 1;
+  }
+
+  int get daysRemaining {
+    final elapsed = currentDayNumber;
+    if (elapsed <= 0) return AppConstants.challengeDurationDays;
+    return (AppConstants.challengeDurationDays - elapsed).clamp(0, AppConstants.challengeDurationDays);
+  }
+
+  bool get challengeStarted => currentDayNumber > 0;
+
+  int get currentWeekNumber => FirebaseService.weekNumberFor(DateTime.now());
+
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   Future<void> init() async {
@@ -74,10 +124,15 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       _currentMember = Member.fromId(savedId);
     }
 
-    await _notifications.init();
+    // Notifications are local-only; never let a hang here block startup.
+    await withTimeout(_notifications.init(), null, duration: const Duration(seconds: 3));
 
     if (_currentMember != null) {
-      await _loadAll();
+      // The entire remote-data bootstrap is capped at 5s. If Firestore is
+      // slow or unreachable, the UI proceeds anyway and the live listeners
+      // (listenTasks/listenTodayCompletions/etc.) fill in data as it
+      // arrives — the splash screen never hangs forever.
+      await withTimeout(_loadAll(), null, duration: const Duration(seconds: 5));
     }
 
     _loading = false;
@@ -101,18 +156,20 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Triggered automatically when the calendar flips to a new day.
   Future<void> _refreshForNewDay(String date) async {
-    // Seed the fresh daily checklist using the admin-defined task list
-    await _firebase.initializeDay(date, _tasks);
-    // Recalculate streaks
-    await _firebase.recalculateAndSaveAllStreaks(_tasks);
-    // Reload app state fresh
+    // Seed the fresh daily checklist using the admin-defined task list.
+    // Never block the UI on this — fire it with a timeout and move on.
+    await withTimeout(_firebase.initializeDay(date, _tasks), null);
+    await withTimeout(_firebase.recalculateAndSaveAllStreaks(_tasks), null);
     _todayCompletions = {};
     _allMembersToday = {};
-    await Future.wait([
-      _loadTodayCompletions(),
-      _loadAllMembersToday(),
-      _loadStreaks(),
-    ]);
+    await withTimeout(
+      Future.wait([
+        _loadTodayCompletions(),
+        _loadAllMembersToday(),
+        _loadStreaks(),
+      ]),
+      null,
+    );
     notifyListeners();
   }
 
@@ -126,43 +183,75 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('member_id', member.id);
     _currentMember = member;
-    await _loadAll();
+    await withTimeout(_loadAll(), null, duration: const Duration(seconds: 5));
     notifyListeners();
   }
 
   Future<void> _loadAll() async {
     // Tasks must be loaded before we can seed today's checklist.
-    await _loadTasks();
-    await Future.wait([
-      _loadTodayCompletions(),
-      _loadAllMembersToday(),
-      _loadStreaks(),
-    ]);
+    await withTimeout(_loadTasks(), null);
+    await withTimeout(
+      Future.wait([
+        _loadTodayCompletions(),
+        _loadAllMembersToday(),
+        _loadStreaks(),
+        _loadProfile(),
+      ]),
+      null,
+    );
     // Seed today's fresh checklist for all members (idempotent — skips if
-    // already seeded; never overwrites completions the user has already made).
-    _firebase.initializeDay(todayKey, _tasks);
+    // already seeded; never overwrites completions the user has already
+    // made). Fire-and-forget with its own timeout so it can never stall
+    // startup — if today's record doesn't exist yet it gets created here.
+    // ignore: unawaited_futures
+    withTimeout(_firebase.initializeDay(todayKey, _tasks), null);
+    notifyListeners();
+  }
+
+  /// Manual pull-to-refresh: reloads data without ever hanging the UI.
+  Future<void> refresh() async {
+    if (_currentMember == null) return;
+    await withTimeout(_loadAll(), null, duration: const Duration(seconds: 5));
     notifyListeners();
   }
 
   // ── Tasks ─────────────────────────────────────────────────────────────────
 
   Future<void> _loadTasks() async {
-    _tasks = await _firebase.fetchTasks();
-    await _notifications.scheduleTaskReminders(_tasks);
+    _tasks = await withTimeout(_firebase.fetchTasks(), <DailyTask>[]);
+    if (_currentMember != null) {
+      await withTimeout(
+        _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id)),
+        null,
+        duration: const Duration(seconds: 3),
+      );
+    }
   }
 
   void listenTasks() {
     _firebase.tasksStream().listen((tasks) {
       _tasks = tasks;
-      _notifications.scheduleTaskReminders(tasks);
+      if (_currentMember != null) {
+        _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id));
+      }
       notifyListeners();
     });
   }
 
+  /// Tasks that apply to [memberId] — Vansh's list differs from Govind &
+  /// Piyush's.
+  List<DailyTask> tasksForMember(String memberId) =>
+      _tasks.where((t) => t.appliesToMember(memberId)).toList();
+
+  List<DailyTask> get tasksForCurrentMember =>
+      _currentMember == null ? [] : tasksForMember(_currentMember!.id);
+
   Future<void> addTask(DailyTask task) async {
     await _firebase.saveTask(task, _tasks.length);
     _tasks = await _firebase.fetchTasks();
-    await _notifications.scheduleTaskReminders(_tasks);
+    if (_currentMember != null) {
+      await _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id));
+    }
     notifyListeners();
   }
 
@@ -170,7 +259,9 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     final idx = _tasks.indexWhere((t) => t.id == task.id);
     await _firebase.saveTask(task, idx >= 0 ? idx : _tasks.length);
     _tasks = await _firebase.fetchTasks();
-    await _notifications.scheduleTaskReminders(_tasks);
+    if (_currentMember != null) {
+      await _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id));
+    }
     notifyListeners();
   }
 
@@ -184,8 +275,10 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _loadTodayCompletions() async {
     if (_currentMember == null) return;
-    _todayCompletions =
-        await _firebase.fetchDayCompletions(_currentMember!.id, todayKey);
+    _todayCompletions = await withTimeout(
+      _firebase.fetchDayCompletions(_currentMember!.id, todayKey),
+      <String, TaskStatus>{},
+    );
   }
 
   void listenTodayCompletions() {
@@ -204,18 +297,20 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
         _currentMember!.id, todayKey, taskId, status);
     _todayCompletions[taskId] = status;
     // Recalculate streak live
-    final streak =
+    final info =
         await _firebase.calculateStreak(_currentMember!.id, _tasks);
-    await _firebase.saveStreak(_currentMember!.id, streak);
-    _streaks[_currentMember!.id] = streak;
+    await _firebase.saveStreak(_currentMember!.id, info);
+    _streaks[_currentMember!.id] = info;
     notifyListeners();
   }
 
   // ── All members (today) ───────────────────────────────────────────────────
 
   Future<void> _loadAllMembersToday() async {
-    _allMembersToday =
-        await _firebase.fetchAllMembersDayCompletions(todayKey);
+    _allMembersToday = await withTimeout(
+      _firebase.fetchAllMembersDayCompletions(todayKey),
+      <String, Map<String, TaskStatus>>{},
+    );
   }
 
   void listenAllMembersToday() {
@@ -238,17 +333,24 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _loadStreaks() async {
     // Try fast path: persisted streaks
-    final persisted = await _firebase.fetchAllStreaks();
+    final persisted = await withTimeout(
+      _firebase.fetchAllStreaks(),
+      <String, StreakInfo>{},
+    );
     if (persisted.isNotEmpty) {
       _streaks = persisted;
       notifyListeners();
       return;
     }
-    // Fallback: recalculate and persist
+    // Fallback: recalculate and persist (best-effort, timeboxed)
     for (final member in Member.all) {
-      final s = await _firebase.calculateStreak(member.id, _tasks);
-      _streaks[member.id] = s;
-      await _firebase.saveStreak(member.id, s);
+      final info = await withTimeout(
+        _firebase.calculateStreak(member.id, _tasks),
+        const StreakInfo(),
+      );
+      _streaks[member.id] = info;
+      // ignore: unawaited_futures
+      _firebase.saveStreak(member.id, info);
     }
     notifyListeners();
   }
@@ -258,6 +360,50 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       _streaks = data;
       notifyListeners();
     });
+  }
+
+  // ── Profile ───────────────────────────────────────────────────────────────
+
+  Future<void> _loadProfile() async {
+    if (_currentMember == null) return;
+    final raw = await withTimeout(
+      _firebase.fetchProfileRaw(_currentMember!.id),
+      null,
+    );
+    _profile = raw == null ? null : MemberProfile.fromMap(raw);
+    _profileChecked = true;
+  }
+
+  void listenProfile() {
+    if (_currentMember == null) return;
+    _firebase.profileStream(_currentMember!.id).listen((raw) {
+      _profile = raw == null ? null : MemberProfile.fromMap(raw);
+      _profileChecked = true;
+      notifyListeners();
+    });
+  }
+
+  Future<void> saveProfile(MemberProfile profile) async {
+    await _firebase.saveProfile(profile);
+    _profile = profile;
+    _profileChecked = true;
+    notifyListeners();
+  }
+
+  // ── Admin panel access ────────────────────────────────────────────────────
+
+  bool tryUnlockAdminPanel(String password) {
+    final ok = password == AppConstants.adminPassword;
+    if (ok) {
+      _adminPanelUnlocked = true;
+      notifyListeners();
+    }
+    return ok;
+  }
+
+  void lockAdminPanel() {
+    _adminPanelUnlocked = false;
+    notifyListeners();
   }
 
   // ── History ───────────────────────────────────────────────────────────────
@@ -280,7 +426,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> toggleHistoryAdminUnlock(String date) async {
-    if (!isAdmin) return;
+    if (!isAdmin && !_adminPanelUnlocked) return;
     final newState = !_historyDateAdminUnlocked;
     await _firebase.setAdminUnlock(date, unlock: newState);
     _historyDateAdminUnlocked = newState;
@@ -290,14 +436,14 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Admin editing a past day's task for any member.
   Future<void> setHistoryTaskStatus(
       String memberId, String date, String taskId, TaskStatus status) async {
-    if (!isAdmin) return;
+    if (!isAdmin && !_adminPanelUnlocked) return;
     await _firebase.setTaskStatus(memberId, date, taskId, status);
     _historyData[memberId] ??= {};
     _historyData[memberId]![taskId] = status;
     // Recalculate streak for affected member
-    final streak = await _firebase.calculateStreak(memberId, _tasks);
-    await _firebase.saveStreak(memberId, streak);
-    _streaks[memberId] = streak;
+    final info = await _firebase.calculateStreak(memberId, _tasks);
+    await _firebase.saveStreak(memberId, info);
+    _streaks[memberId] = info;
     notifyListeners();
   }
 
@@ -310,33 +456,60 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   // ── Stats helpers ─────────────────────────────────────────────────────────
 
-  double completionPercent(Map<String, TaskStatus> completions) {
-    if (_tasks.isEmpty) return 0;
+  /// Completion percentage for [completions], scoped to the tasks that
+  /// apply to [memberId] (defaults to the current member).
+  double completionPercent(Map<String, TaskStatus> completions, {String? memberId}) {
+    final relevant = tasksForMember(memberId ?? _currentMember?.id ?? '');
+    if (relevant.isEmpty) return 0;
     final completed =
-        completions.values.where((s) => s == TaskStatus.completed).length;
-    return completed / _tasks.length;
+        relevant.where((t) => completions[t.id] == TaskStatus.completed).length;
+    return completed / relevant.length;
   }
 
-  int completedCount(Map<String, TaskStatus> completions) =>
-      completions.values.where((s) => s == TaskStatus.completed).length;
+  int completedCount(Map<String, TaskStatus> completions, {String? memberId}) {
+    final relevant = tasksForMember(memberId ?? _currentMember?.id ?? '');
+    return relevant.where((t) => completions[t.id] == TaskStatus.completed).length;
+  }
 
-  int remainingCount(Map<String, TaskStatus> completions) {
-    final done =
-        completions.values.where((s) => s != TaskStatus.pending).length;
-    return (_tasks.length - done).clamp(0, _tasks.length);
+  int taskCountFor(String memberId) => tasksForMember(memberId).length;
+
+  int remainingCount(Map<String, TaskStatus> completions, {String? memberId}) {
+    final relevant = tasksForMember(memberId ?? _currentMember?.id ?? '');
+    final done = relevant
+        .where((t) => (completions[t.id] ?? TaskStatus.pending) != TaskStatus.pending)
+        .length;
+    return (relevant.length - done).clamp(0, relevant.length);
   }
 
   TaskStatus statusOf(String taskId) =>
       _todayCompletions[taskId] ?? TaskStatus.pending;
 
+  /// Today's score = number of tasks completed today (each task = +1).
+  int get todaysScore => completedCount(_todayCompletions);
+
+  double get todaysPercent => completionPercent(_todayCompletions);
+
+  /// Rank (1 = best) of the current member today, by completion % then streak.
+  int get dailyRank {
+    if (_currentMember == null) return 0;
+    final ranked = leaderboardByCompletion;
+    final idx = ranked.indexWhere((m) => m.id == _currentMember!.id);
+    return idx == -1 ? 0 : idx + 1;
+  }
+
   // ── Leaderboard ───────────────────────────────────────────────────────────
 
+  /// Ranked by completion % first, then current streak as a tie-breaker.
   List<Member> get leaderboardByCompletion {
     final members = List<Member>.from(Member.all);
     members.sort((a, b) {
-      final aP = completionPercent(_allMembersToday[a.id] ?? {});
-      final bP = completionPercent(_allMembersToday[b.id] ?? {});
-      return bP.compareTo(aP);
+      final aP = completionPercent(_allMembersToday[a.id] ?? {}, memberId: a.id);
+      final bP = completionPercent(_allMembersToday[b.id] ?? {}, memberId: b.id);
+      final cmp = bP.compareTo(aP);
+      if (cmp != 0) return cmp;
+      final aS = _streaks[a.id]?.current ?? 0;
+      final bS = _streaks[b.id]?.current ?? 0;
+      return bS.compareTo(aS);
     });
     return members;
   }
@@ -344,8 +517,8 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Member> get leaderboardByStreak {
     final members = List<Member>.from(Member.all);
     members.sort((a, b) {
-      final aS = _streaks[a.id] ?? 0;
-      final bS = _streaks[b.id] ?? 0;
+      final aS = _streaks[a.id]?.current ?? 0;
+      final bS = _streaks[b.id]?.current ?? 0;
       return bS.compareTo(aS);
     });
     return members;

@@ -1,0 +1,367 @@
+Update the entire Brotherhood app with the following major changes. Do NOT ask questions. Implement everything.
+
+========================
+1. FIX THE LOADING BUG
+========================
+
+There is a bug after reopening the app.
+
+Current behavior:
+- First install works.
+- User selects identity.
+- Later when reopening the app it gets stuck forever on the trophy loading screen.
+
+Fix this permanently.
+
+Requirements:
+- Never stay on loading forever.
+- If Firestore fails, timeout after 5 seconds.
+- Always continue into the app.
+- If today's data doesn't exist, automatically create it.
+- Never block the UI while Firebase is loading.
+- Loading screen should disappear even if internet is slow.
+
+========================
+2. START DATE
+========================
+
+Challenge starts on:
+
+13 July 2026
+
+Day counter should begin from this date.
+
+========================
+3. MEMBERS
+========================
+
+Members:
+
+Vansh
+Govind
+Piyush
+
+No fourth member.
+
+========================
+4. FIRST TIME SETUP
+========================
+
+When a member opens the app for the first time after selecting identity,
+
+show a profile setup page.
+
+Fields:
+
+• Height
+• Weight
+• Goal
+• Current body fat (optional)
+• Age
+
+Save permanently.
+
+========================
+5. WEEKLY PROGRESS
+========================
+
+Every 7 days require:
+
+Front body photo
+Side photo
+Back photo
+Face photo
+
+Store inside Firebase.
+
+Only admin can see everyone's progress photos.
+
+========================
+6. ADMIN PANEL
+========================
+
+Create hidden Admin Panel.
+
+Password:
+
+vanshwedsmarjan
+
+Admin can:
+
+View everyone's profile
+View progress photos
+View weight history
+View goals
+Unlock previous dates
+Edit tasks
+View all statistics
+
+Nobody else can access it.
+
+========================
+7. NEW BOTTOM TABS
+========================
+
+Current:
+
+Leaderboard
+Tasks
+Members
+
+New:
+
+Leaderboard
+Tasks
+Diet
+Exercise
+Members
+
+========================
+8. DIET PAGE
+========================
+
+Create a beautiful timeline.
+
+Meal 1 (After Gym)
+
+100g Daliya
+Milk
+1 Spoon Ghee
+5 Eggs
+
+Meal 2
+
+Bulking Shake
+
+Recipe:
+
+2 Bananas
+1 Glass Milk
+2 Scoops Oats
+1 Spoon Peanut Butter
+Cashew
+Almond
+Raisins
+
+Meal 3
+
+300g Rice
+Dal
+Salad
+200g Curd
+
+Meal 4
+
+Same Bulking Shake
+
+Meal 5
+
+3 Eggs
+150g Chicken Breast
+
+Meal 6
+
+3-4 Roti
+Home Sabzi
+
+Before Sleep
+
+1 Glass Milk
+
+========================
+9. EXERCISE PAGE
+========================
+
+Monday
+Chest + Front Delts + Side Delts
+(Include 4 arm exercises too)
+
+Tuesday
+Back
+
+Wednesday
+Arms + Rear Delts
+
+Thursday
+Chest + Front Delts + Side Delts
+(Include 4 arm exercises too)
+
+Friday
+Back
+
+Saturday
+Legs
+
+Sunday
+Rest
+
+Show:
+
+Exercise
+Sets
+Reps
+
+with clean UI.
+
+========================
+10. TASKS
+========================
+
+Keep Vansh different.
+
+Govind and Piyush:
+
+Remove:
+
+3 Adequate Meals
+Eat Dry Fruits
+Business
+Looksmaxing
+Pray Be Calm Be Kind
+Study
+Coding
+Shoulder Workout
+
+Keep remaining tasks.
+
+Screen Time:
+
+5 Hours
+
+Social Media:
+
+3 Hours
+
+Avoid Phone:
+
+After 11 PM
+
+Water:
+
+4L
+
+--------------------------------
+
+Vansh Tasks
+
+Keep same but:
+
+Water = 5L
+
+Replace
+
+Learn Spanish
+
+with
+
+Learn French
+
+========================
+11. SCORE
+========================
+
+Every completed task = +1
+
+Show:
+
+Today's Score
+
+Percentage
+
+Daily Rank
+
+========================
+12. STREAKS
+========================
+
+Improve streak system.
+
+Show:
+
+Current Streak
+
+Longest Streak
+
+Missed Days
+
+========================
+13. LEADERBOARD
+========================
+
+Leaderboard should rank by:
+
+Completion %
+
+then
+
+Current Streak
+
+========================
+14. HOME DASHBOARD
+========================
+
+Beautiful dashboard.
+
+Show:
+
+Today's Progress
+
+Current Day
+
+Days Remaining
+
+Score
+
+Completion %
+
+Weekly Progress
+
+Current Streak
+
+Longest Streak
+
+========================
+15. UI
+========================
+
+Modern dark theme.
+
+Smooth animations.
+
+Glass cards.
+
+Rounded UI.
+
+Gradient accents.
+
+Better typography.
+
+========================
+16. PERFORMANCE
+========================
+
+Optimize everything.
+
+No freezes.
+
+No infinite loading.
+
+No duplicate Firebase reads.
+
+========================
+17. IMPORTANT
+========================
+
+Do NOT break existing Firebase structure.
+
+Do NOT remove existing data.
+
+Automatically migrate old users.
+
+Project must build successfully.
+
+Fix all compile errors.
+
+Test everything before finishing.
+
+After finishing, commit all changes and push to GitHub.

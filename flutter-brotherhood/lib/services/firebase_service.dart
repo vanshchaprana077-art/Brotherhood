@@ -1,7 +1,13 @@
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
+import '../constants.dart';
 import '../models/task.dart';
 import '../models/member.dart';
+import '../models/profile.dart';
+import '../models/progress_photo.dart';
+import '../models/streak_info.dart';
 
 class FirebaseService {
   static final FirebaseService _instance = FirebaseService._internal();
@@ -9,6 +15,7 @@ class FirebaseService {
   FirebaseService._internal();
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  FirebaseStorage get _storage => FirebaseStorage.instance;
 
   static String dateKey(DateTime date) => DateFormat('yyyy-MM-dd').format(date);
 
@@ -18,6 +25,15 @@ class FirebaseService {
   static bool isDateLocked(String date) {
     final today = todayKey;
     return date.compareTo(today) < 0;
+  }
+
+  /// Which challenge week (1-based) [date] falls into, relative to the
+  /// challenge start date. Returns 0 if before the challenge starts.
+  static int weekNumberFor(DateTime date) {
+    final start = AppConstants.challengeStart;
+    if (date.isBefore(start)) return 0;
+    final days = date.difference(start).inDays;
+    return (days ~/ AppConstants.progressPhotoIntervalDays) + 1;
   }
 
   // ── Tasks config ──────────────────────────────────────────────────────────
@@ -30,9 +46,13 @@ class FirebaseService {
       await seedDefaultTasks();
       return DailyTask.defaults;
     }
-    return snap.docs
+    final tasks = snap.docs
         .map((d) => DailyTask.fromMap(d.data() as Map<String, dynamic>))
         .toList();
+    // Bring existing (possibly legacy) task configs in line with the new
+    // per-member task rules without ever deleting data.
+    await migrateTasksIfNeeded(tasks);
+    return tasks;
   }
 
   Stream<List<DailyTask>> tasksStream() {
@@ -53,6 +73,91 @@ class FirebaseService {
       batch.set(ref, {...task.toMap(), 'order': i});
     }
     await batch.commit();
+  }
+
+  /// One-time, additive migration that upgrades an existing (legacy)
+  /// tasks_config collection to match the new per-member task rules.
+  /// Never deletes a document — only merges fields or adds missing ones —
+  /// so historical completion data tied to old task ids stays intact.
+  Future<void> migrateTasksIfNeeded(List<DailyTask> existing) async {
+    final existingIds = existing.map((t) => t.id).toSet();
+    final batch = _db.batch();
+    bool changed = false;
+
+    const vanshOnlyTitles = [
+      '3 adequate meals',
+      'eat dry fruits',
+      'business',
+      'looksmaxing',
+      'pray be calm be kind',
+      'study',
+      'coding',
+      'shoulder workout',
+    ];
+
+    // 1. Legacy "Learn Spanish" -> "Learn French", scoped to Vansh.
+    for (final t in existing) {
+      if (t.title.toLowerCase().contains('spanish')) {
+        batch.set(
+          _tasksCol.doc(t.id),
+          {'title': 'Learn French', 'icon': '🇫🇷', 'appliesTo': ['vansh']},
+          SetOptions(merge: true),
+        );
+        changed = true;
+      }
+    }
+
+    // 2. Scope known Vansh-only tasks away from Govind & Piyush.
+    for (final t in existing) {
+      if (vanshOnlyTitles.contains(t.title.toLowerCase()) &&
+          (t.appliesTo == null || t.appliesTo!.isEmpty)) {
+        batch.set(
+          _tasksCol.doc(t.id),
+          {'appliesTo': ['vansh']},
+          SetOptions(merge: true),
+        );
+        changed = true;
+      }
+    }
+
+    // 3. Split a legacy single "water" task into per-member targets.
+    final waterIdx = existing.indexWhere(
+        (t) => t.id == 'drink_water' || t.title.toLowerCase().contains('water'));
+    if (waterIdx != -1 && !existingIds.contains('water_gp')) {
+      final t = existing[waterIdx];
+      if (t.appliesTo == null || t.appliesTo!.isEmpty) {
+        batch.set(
+          _tasksCol.doc(t.id),
+          {'title': 'Drink Water (5L)', 'appliesTo': ['vansh']},
+          SetOptions(merge: true),
+        );
+        batch.set(_tasksCol.doc('water_gp'), {
+          'id': 'water_gp',
+          'title': 'Drink Water (4L)',
+          'icon': '💧',
+          'notificationTime': t.notificationTime,
+          'isDefault': true,
+          'appliesTo': ['govind', 'piyush'],
+          'order': 100,
+        });
+        changed = true;
+      }
+    }
+
+    // 4. Add any canonical tasks that are entirely missing.
+    for (int i = 0; i < DailyTask.defaults.length; i++) {
+      final canon = DailyTask.defaults[i];
+      if (!existingIds.contains(canon.id) && canon.id != 'water_gp') {
+        batch.set(
+          _tasksCol.doc(canon.id),
+          {...canon.toMap(), 'order': 200 + i},
+          SetOptions(merge: true),
+        );
+        changed = true;
+      }
+    }
+
+    if (changed) await batch.commit();
   }
 
   Future<void> saveTask(DailyTask task, int order) async {
@@ -76,9 +181,10 @@ class FirebaseService {
   DocumentReference _dayRecordDoc(String date) =>
       _db.collection('day_records').doc(date);
 
-  /// Seeds the daily checklist for every member for [date].
+  /// Seeds the daily checklist for every member for [date], using each
+  /// member's own filtered task list (Vansh's set differs from Govind &
+  /// Piyush's).
   ///
-  /// The task definitions come from [tasks] (the single admin-managed list).
   /// Calling this more than once for the same date is safe — a `seeded` flag
   /// prevents double-seeding, and `setTaskStatus` (merge) always wins over
   /// whatever was seeded, so user progress is never overwritten.
@@ -92,15 +198,10 @@ class FirebaseService {
       if (data['seeded'] == true) return; // already done
     }
 
-    // ── Seed every member's completion doc ───────────────────────────────
-    // Build the initial task map: every task starts as pending.
-    final taskMap = {for (final t in tasks) t.id: TaskStatus.pending.name};
-
-    // Read all 4 members' docs first so we only write the ones that don't
-    // exist yet (avoids overwriting a doc the user has already started on).
     final batch = _db.batch();
-    bool anyWrite = false;
     for (final member in Member.all) {
+      final memberTasks = tasks.where((t) => t.appliesToMember(member.id));
+      final taskMap = {for (final t in memberTasks) t.id: TaskStatus.pending.name};
       final ref = _completionDoc(member.id, date);
       final snap = await ref.get();
       if (!snap.exists) {
@@ -110,7 +211,6 @@ class FirebaseService {
           'tasks': taskMap,
           'seededAt': FieldValue.serverTimestamp(),
         });
-        anyWrite = true;
       }
     }
 
@@ -122,7 +222,7 @@ class FirebaseService {
       'taskCount': tasks.length,
     }, SetOptions(merge: true));
 
-    await batch.commit(); // always write the day record (marks day as seeded)
+    await batch.commit();
   }
 
   // ── Admin unlocks ─────────────────────────────────────────────────────────
@@ -256,66 +356,200 @@ class FirebaseService {
 
   // ── Streaks (persisted in Firestore for fast reads) ───────────────────────
 
-  Future<void> saveStreak(String memberId, int streak) async {
+  Future<void> saveStreak(String memberId, StreakInfo info) async {
     await _db.collection('streaks').doc(memberId).set({
       'memberId': memberId,
-      'streak': streak,
+      ...info.toMap(),
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
   }
 
-  Future<Map<String, int>> fetchAllStreaks() async {
+  Future<Map<String, StreakInfo>> fetchAllStreaks() async {
     final snap = await _db.collection('streaks').get();
-    final result = <String, int>{};
+    final result = <String, StreakInfo>{};
     for (final doc in snap.docs) {
       final data = doc.data();
-      result[data['memberId'] as String] = data['streak'] as int? ?? 0;
+      result[data['memberId'] as String] = StreakInfo.fromMap(data);
     }
     return result;
   }
 
-  Stream<Map<String, int>> streaksStream() {
+  Stream<Map<String, StreakInfo>> streaksStream() {
     return _db.collection('streaks').snapshots().map((snap) {
-      final result = <String, int>{};
+      final result = <String, StreakInfo>{};
       for (final doc in snap.docs) {
         final data = doc.data();
-        result[data['memberId'] as String] = data['streak'] as int? ?? 0;
+        result[data['memberId'] as String] = StreakInfo.fromMap(data);
       }
       return result;
     });
   }
 
-  /// Recalculate streak from Firestore history (looks back up to 90 days).
-  Future<int> calculateStreak(String memberId, List<DailyTask> tasks) async {
-    if (tasks.isEmpty) return 0;
-    int streak = 0;
-    DateTime day = DateTime.now();
-    final startDate = DateTime(2026, 7, 12);
-    // Skip today if not yet complete — streak counts fully-done days
-    // (start checking from today so partial days still count)
-    for (int i = 0; i < 90; i++) {
-      if (day.isBefore(startDate)) break;
+  /// Recalculate streak stats from Firestore history (looks back up to 200
+  /// days from the challenge start). Uses only the tasks that apply to
+  /// [memberId] so Vansh's different task list doesn't skew his streak.
+  Future<StreakInfo> calculateStreak(
+      String memberId, List<DailyTask> allTasks) async {
+    final memberTasks =
+        allTasks.where((t) => t.appliesToMember(memberId)).toList();
+    if (memberTasks.isEmpty) return const StreakInfo();
+
+    final startDate = AppConstants.challengeStart;
+    final today = DateTime.now();
+    if (today.isBefore(startDate)) return const StreakInfo();
+
+    int current = 0;
+    int longest = 0;
+    int missed = 0;
+    int running = 0;
+    bool stillCounting = true; // current streak counts back from today
+
+    DateTime day = today;
+    while (!day.isBefore(startDate)) {
       final dateStr = dateKey(day);
       final completions = await fetchDayCompletions(memberId, dateStr);
-      final completed =
-          completions.values.where((s) => s == TaskStatus.completed).length;
-      if (completed < tasks.length) {
-        // today with pending tasks still counts as active — skip only if it's
-        // a past day with < 100%
-        if (dateStr != todayKey) break;
+      final completedCount = memberTasks
+          .where((t) => completions[t.id] == TaskStatus.completed)
+          .length;
+      final fullyDone = completedCount >= memberTasks.length;
+
+      if (fullyDone) {
+        running++;
+        if (running > longest) longest = running;
       } else {
-        streak++;
+        // Today with pending tasks still counts toward the current streak
+        // (it isn't "missed" until the day is over), but breaks the running
+        // streak count for everything before it.
+        if (dateStr != todayKey) missed++;
+        if (stillCounting && dateStr == todayKey) {
+          // don't break; just don't increment
+        } else {
+          if (stillCounting) {
+            current = running;
+            stillCounting = false;
+          }
+          running = 0;
+        }
       }
       day = day.subtract(const Duration(days: 1));
     }
-    return streak;
+    if (stillCounting) current = running;
+    if (longest < current) longest = current;
+
+    return StreakInfo(current: current, longest: longest, missedDays: missed);
   }
 
   /// Recalculate streaks for all members and persist them.
   Future<void> recalculateAndSaveAllStreaks(List<DailyTask> tasks) async {
     for (final member in Member.all) {
-      final streak = await calculateStreak(member.id, tasks);
-      await saveStreak(member.id, streak);
+      final info = await calculateStreak(member.id, tasks);
+      await saveStreak(member.id, info);
     }
+  }
+
+  // ── Member profiles ───────────────────────────────────────────────────────
+
+  DocumentReference _profileDoc(String memberId) =>
+      _db.collection('profiles').doc(memberId);
+
+  Future<void> saveProfile(MemberProfile memberProfile) async {
+    await _profileDoc(memberProfile.memberId).set({
+      ...memberProfile.toMap(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    // Log the weight so admins can see a history over time.
+    await _db.collection('weight_logs').add({
+      'memberId': memberProfile.memberId,
+      'weightKg': memberProfile.weightKg,
+      'date': DateTime.now().toIso8601String(),
+      'loggedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<Map<String, dynamic>?> fetchProfileRaw(String memberId) async {
+    final doc = await _profileDoc(memberId).get();
+    if (!doc.exists) return null;
+    return doc.data() as Map<String, dynamic>;
+  }
+
+  Stream<Map<String, dynamic>?> profileStream(String memberId) {
+    return _profileDoc(memberId).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      return doc.data() as Map<String, dynamic>;
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> fetchAllProfiles() async {
+    final result = <Map<String, dynamic>>[];
+    for (final member in Member.all) {
+      final data = await fetchProfileRaw(member.id);
+      if (data != null) result.add(data);
+    }
+    return result;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchWeightHistory(String memberId) async {
+    final snap = await _db
+        .collection('weight_logs')
+        .where('memberId', isEqualTo: memberId)
+        .orderBy('date', descending: true)
+        .limit(60)
+        .get();
+    return snap.docs.map((d) => d.data()).toList();
+  }
+
+  // ── Weekly progress photos ────────────────────────────────────────────────
+
+  DocumentReference _progressDoc(String memberId, int weekNumber) =>
+      _db.collection('progress_photos').doc('${memberId}_week$weekNumber');
+
+  Future<String> uploadProgressPhoto({
+    required String memberId,
+    required int weekNumber,
+    required ProgressPhotoType type,
+    required File file,
+  }) async {
+    final ref = _storage
+        .ref()
+        .child('progress_photos/$memberId/week$weekNumber/${type.name}.jpg');
+    await ref.putFile(file);
+    final url = await ref.getDownloadURL();
+    await _progressDoc(memberId, weekNumber).set({
+      'memberId': memberId,
+      'weekNumber': weekNumber,
+      type.field: url,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    return url;
+  }
+
+  Future<WeeklyProgressPhotos?> fetchProgressWeek(
+      String memberId, int weekNumber) async {
+    final doc = await _progressDoc(memberId, weekNumber).get();
+    if (!doc.exists) return null;
+    return WeeklyProgressPhotos.fromMap(doc.data() as Map<String, dynamic>);
+  }
+
+  Future<List<WeeklyProgressPhotos>> fetchAllProgressForMember(
+      String memberId) async {
+    final snap = await _db
+        .collection('progress_photos')
+        .where('memberId', isEqualTo: memberId)
+        .get();
+    final list = snap.docs
+        .map((d) => WeeklyProgressPhotos.fromMap(d.data()))
+        .toList();
+    list.sort((a, b) => b.weekNumber.compareTo(a.weekNumber));
+    return list;
+  }
+
+  /// Admin-only: fetch every member's progress photos, grouped by memberId.
+  Future<Map<String, List<WeeklyProgressPhotos>>> fetchAllProgressPhotos() async {
+    final result = <String, List<WeeklyProgressPhotos>>{};
+    for (final member in Member.all) {
+      result[member.id] = await fetchAllProgressForMember(member.id);
+    }
+    return result;
   }
 }
