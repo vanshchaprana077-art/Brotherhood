@@ -95,7 +95,7 @@ class _IdentitySelectionScreenState extends State<IdentitySelectionScreen> {
                               color: Colors.white,
                             ),
                           )
-                        : const Text('Enter Brotherhood'),
+                        : const row('Enter Brotherhood'),
                   ),
                 ),
               ).animate().fadeIn(delay: 800.ms),
