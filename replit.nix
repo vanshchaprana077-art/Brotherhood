@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.git
     pkgs.curl
     pkgs.wget
     pkgs.unzip
