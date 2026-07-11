@@ -111,7 +111,7 @@ class BrotherhoodApp extends StatelessWidget {
       colorScheme: colorScheme,
       scaffoldBackgroundColor: const Color(0xFF0F0F1A),
       textTheme: GoogleFonts.poppinsTextTheme(ThemeData.dark().textTheme),
-      cardTheme: CardThemeData(
+      cardTheme: CardTheme(
         color: const Color(0xFF1A1A2E),
         elevation: 0,
         shape: RoundedRectangleBorder(
