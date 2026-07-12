@@ -10,7 +10,6 @@ import 'providers/app_provider.dart';
 import 'screens/identity_selection_screen.dart';
 import 'screens/main_nav_screen.dart';
 import 'services/firebase_service.dart';
-import 'models/task.dart';
 
 // ── Background task dispatcher (must be a top-level function) ─────────────────
 
@@ -59,7 +58,7 @@ void main() async {
     frequency: const Duration(hours: 24),
     initialDelay: _timeUntilMidnight(),
     constraints: Constraints(networkType: NetworkType.connected),
-    existingWorkPolicy: ExistingWorkPolicy.replace,
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
   );
 
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -111,7 +110,7 @@ class BrotherhoodApp extends StatelessWidget {
       colorScheme: colorScheme,
       scaffoldBackgroundColor: const Color(0xFF0F0F1A),
       textTheme: GoogleFonts.poppinsTextTheme(ThemeData.dark().textTheme),
-      cardTheme: CardTheme(
+     cardTheme: CardThemeData(
         color: const Color(0xFF1A1A2E),
         elevation: 0,
         shape: RoundedRectangleBorder(
