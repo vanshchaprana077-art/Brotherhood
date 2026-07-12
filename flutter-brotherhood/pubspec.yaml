@@ -44,6 +44,12 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.13.1
 
+dependency_overrides:
+  # flutter_test pins vector_math to 2.1.4, but Flutter 3.29.3's AOT compiler
+  # needs 2.2.0 for Matrix4 in rendering. Pin exactly to the version the
+  # original pub.lock had (sdk: ^3.1.0 → compatible with Dart 3.7.2).
+  vector_math: 2.2.0
+
 flutter:
   uses-material-design: true
 

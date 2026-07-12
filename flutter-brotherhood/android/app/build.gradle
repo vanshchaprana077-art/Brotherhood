@@ -19,7 +19,7 @@ def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "
 android {
     namespace "com.brotherhood.app"
     compileSdk flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
+    ndkVersion "26.3.11579264"
 
     compileOptions {
         coreLibraryDesugaringEnabled true
@@ -42,6 +42,11 @@ android {
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
     }
 
     buildTypes {

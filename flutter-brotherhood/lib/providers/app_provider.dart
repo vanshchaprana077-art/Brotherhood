@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
@@ -12,10 +11,7 @@ import '../services/notification_service.dart';
 
 /// Wraps a future so it can never hang the UI forever. If it doesn't
 /// resolve within [duration] (default 5s) or it throws, [fallback] is
-/// returned instead. This is the core fix for the "stuck on loading
-/// forever" bug: every Firestore call the app depends on during startup
-/// goes through this so a flaky connection degrades gracefully instead of
-/// freezing the splash screen.
+/// returned instead.
 Future<T> withTimeout<T>(
   Future<T> future,
   T fallback, {
@@ -78,21 +74,15 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   String get todayKey => DateFormat('yyyy-MM-dd').format(DateTime.now());
 
-  /// True when a date is before today.
   bool isDateLocked(String date) => FirebaseService.isDateLocked(date);
 
-  /// Can the current user edit tasks for [date]?
-  /// - Today: always yes
-  /// - Past + admin-unlocked + user is admin: yes
-  /// - Past otherwise: no
   bool canEditDate(String date) {
-    if (!isDateLocked(date)) return true; // today
+    if (!isDateLocked(date)) return true;
     return isAdmin && _historyDateAdminUnlocked;
   }
 
   // ── Challenge timing ──────────────────────────────────────────────────────
 
-  /// 1-based day number since the challenge started. 0 if not started yet.
   int get currentDayNumber {
     final now = DateTime.now();
     if (now.isBefore(AppConstants.challengeStart)) return 0;
@@ -124,14 +114,9 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       _currentMember = Member.fromId(savedId);
     }
 
-    // Notifications are local-only; never let a hang here block startup.
     await withTimeout(_notifications.init(), null, duration: const Duration(seconds: 3));
 
     if (_currentMember != null) {
-      // The entire remote-data bootstrap is capped at 5s. If Firestore is
-      // slow or unreachable, the UI proceeds anyway and the live listeners
-      // (listenTasks/listenTodayCompletions/etc.) fill in data as it
-      // arrives — the splash screen never hangs forever.
       await withTimeout(_loadAll(), null, duration: const Duration(seconds: 5));
     }
 
@@ -154,10 +139,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Triggered automatically when the calendar flips to a new day.
   Future<void> _refreshForNewDay(String date) async {
-    // Seed the fresh daily checklist using the admin-defined task list.
-    // Never block the UI on this — fire it with a timeout and move on.
     await withTimeout(_firebase.initializeDay(date, _tasks), null);
     await withTimeout(_firebase.recalculateAndSaveAllStreaks(_tasks), null);
     _todayCompletions = {};
@@ -183,12 +165,13 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('member_id', member.id);
     _currentMember = member;
+    _profileChecked = false;
+    _profile = null;
     await withTimeout(_loadAll(), null, duration: const Duration(seconds: 5));
     notifyListeners();
   }
 
   Future<void> _loadAll() async {
-    // Tasks must be loaded before we can seed today's checklist.
     await withTimeout(_loadTasks(), null);
     await withTimeout(
       Future.wait([
@@ -199,16 +182,11 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       ]),
       null,
     );
-    // Seed today's fresh checklist for all members (idempotent — skips if
-    // already seeded; never overwrites completions the user has already
-    // made). Fire-and-forget with its own timeout so it can never stall
-    // startup — if today's record doesn't exist yet it gets created here.
     // ignore: unawaited_futures
     withTimeout(_firebase.initializeDay(todayKey, _tasks), null);
     notifyListeners();
   }
 
-  /// Manual pull-to-refresh: reloads data without ever hanging the UI.
   Future<void> refresh() async {
     if (_currentMember == null) return;
     await withTimeout(_loadAll(), null, duration: const Duration(seconds: 5));
@@ -219,6 +197,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _loadTasks() async {
     _tasks = await withTimeout(_firebase.fetchTasks(), <DailyTask>[]);
+    if (_tasks.isEmpty) _tasks = DailyTask.defaults;
     if (_currentMember != null) {
       await withTimeout(
         _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id)),
@@ -238,8 +217,6 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  /// Tasks that apply to [memberId] — Vansh's list differs from Govind &
-  /// Piyush's.
   List<DailyTask> tasksForMember(String memberId) =>
       _tasks.where((t) => t.appliesToMember(memberId)).toList();
 
@@ -247,26 +224,50 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       _currentMember == null ? [] : tasksForMember(_currentMember!.id);
 
   Future<void> addTask(DailyTask task) async {
-    await _firebase.saveTask(task, _tasks.length);
-    _tasks = await _firebase.fetchTasks();
+    try {
+      await _firebase.saveTask(task, _tasks.length);
+      _tasks = await _firebase.fetchTasks();
+    } catch (_) {
+      // Firebase not configured; update locally
+      _tasks = [..._tasks, task];
+    }
     if (_currentMember != null) {
-      await _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id));
+      await withTimeout(
+        _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id)),
+        null,
+        duration: const Duration(seconds: 3),
+      );
     }
     notifyListeners();
   }
 
   Future<void> updateTask(DailyTask task) async {
     final idx = _tasks.indexWhere((t) => t.id == task.id);
-    await _firebase.saveTask(task, idx >= 0 ? idx : _tasks.length);
-    _tasks = await _firebase.fetchTasks();
+    try {
+      await _firebase.saveTask(task, idx >= 0 ? idx : _tasks.length);
+      _tasks = await _firebase.fetchTasks();
+    } catch (_) {
+      // Firebase not configured; update locally
+      if (idx >= 0) {
+        final updated = List<DailyTask>.from(_tasks);
+        updated[idx] = task;
+        _tasks = updated;
+      }
+    }
     if (_currentMember != null) {
-      await _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id));
+      await withTimeout(
+        _notifications.scheduleTaskReminders(tasksForMember(_currentMember!.id)),
+        null,
+        duration: const Duration(seconds: 3),
+      );
     }
     notifyListeners();
   }
 
   Future<void> deleteTask(String taskId) async {
-    await _firebase.deleteTask(taskId);
+    try {
+      await _firebase.deleteTask(taskId);
+    } catch (_) {}
     _tasks.removeWhere((t) => t.id == taskId);
     notifyListeners();
   }
@@ -291,17 +292,23 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// Updates a task status immediately in local state, then syncs to Firebase
+  /// in the background. The UI reacts instantly; Firebase failure is silent.
   Future<void> setTaskStatus(String taskId, TaskStatus status) async {
     if (_currentMember == null) return;
-    await _firebase.setTaskStatus(
-        _currentMember!.id, todayKey, taskId, status);
+    // Immediate optimistic update — UI reacts instantly
     _todayCompletions[taskId] = status;
-    // Recalculate streak live
-    final info =
-        await _firebase.calculateStreak(_currentMember!.id, _tasks);
-    await _firebase.saveStreak(_currentMember!.id, info);
-    _streaks[_currentMember!.id] = info;
     notifyListeners();
+    // Background Firebase sync (fire-and-forget)
+    try {
+      await _firebase.setTaskStatus(_currentMember!.id, todayKey, taskId, status);
+      final info = await _firebase.calculateStreak(_currentMember!.id, _tasks);
+      await _firebase.saveStreak(_currentMember!.id, info);
+      _streaks[_currentMember!.id] = info;
+      notifyListeners();
+    } catch (_) {
+      // Firebase not configured or unreachable; local state already reflects change
+    }
   }
 
   // ── All members (today) ───────────────────────────────────────────────────
@@ -332,7 +339,6 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   // ── Streaks ───────────────────────────────────────────────────────────────
 
   Future<void> _loadStreaks() async {
-    // Try fast path: persisted streaks
     final persisted = await withTimeout(
       _firebase.fetchAllStreaks(),
       <String, StreakInfo>{},
@@ -342,7 +348,6 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
       return;
     }
-    // Fallback: recalculate and persist (best-effort, timeboxed)
     for (final member in Member.all) {
       final info = await withTimeout(
         _firebase.calculateStreak(member.id, _tasks),
@@ -383,12 +388,22 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// Saves profile to Firebase, then updates local state. Navigates away
+  /// from ProfileSetupScreen even if Firebase is unreachable (e.g. placeholder
+  /// credentials) by always setting _profile and notifying.
   Future<void> saveProfile(MemberProfile profile) async {
-    await _firebase.saveProfile(profile);
+    try {
+      await _firebase.saveProfile(profile);
+    } catch (_) {
+      // Firebase may not be configured yet; save in local state and continue
+    }
     _profile = profile;
     _profileChecked = true;
     notifyListeners();
   }
+
+  /// Updates profile details (height, weight, age, etc.) and re-saves.
+  Future<void> updateProfile(MemberProfile profile) => saveProfile(profile);
 
   // ── Admin panel access ────────────────────────────────────────────────────
 
@@ -433,14 +448,12 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Admin editing a past day's task for any member.
   Future<void> setHistoryTaskStatus(
       String memberId, String date, String taskId, TaskStatus status) async {
     if (!isAdmin && !_adminPanelUnlocked) return;
     await _firebase.setTaskStatus(memberId, date, taskId, status);
     _historyData[memberId] ??= {};
     _historyData[memberId]![taskId] = status;
-    // Recalculate streak for affected member
     final info = await _firebase.calculateStreak(memberId, _tasks);
     await _firebase.saveStreak(memberId, info);
     _streaks[memberId] = info;
@@ -456,8 +469,6 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   // ── Stats helpers ─────────────────────────────────────────────────────────
 
-  /// Completion percentage for [completions], scoped to the tasks that
-  /// apply to [memberId] (defaults to the current member).
   double completionPercent(Map<String, TaskStatus> completions, {String? memberId}) {
     final relevant = tasksForMember(memberId ?? _currentMember?.id ?? '');
     if (relevant.isEmpty) return 0;
@@ -484,12 +495,10 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   TaskStatus statusOf(String taskId) =>
       _todayCompletions[taskId] ?? TaskStatus.pending;
 
-  /// Today's score = number of tasks completed today (each task = +1).
   int get todaysScore => completedCount(_todayCompletions);
 
   double get todaysPercent => completionPercent(_todayCompletions);
 
-  /// Rank (1 = best) of the current member today, by completion % then streak.
   int get dailyRank {
     if (_currentMember == null) return 0;
     final ranked = leaderboardByCompletion;
@@ -499,7 +508,6 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   // ── Leaderboard ───────────────────────────────────────────────────────────
 
-  /// Ranked by completion % first, then current streak as a tie-breaker.
   List<Member> get leaderboardByCompletion {
     final members = List<Member>.from(Member.all);
     members.sort((a, b) {

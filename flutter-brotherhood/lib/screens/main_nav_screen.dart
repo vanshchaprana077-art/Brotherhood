@@ -4,10 +4,11 @@ import 'home_screen.dart';
 import 'diet_screen.dart';
 import 'exercise_screen.dart';
 import 'members_screen.dart';
+import 'profile_screen.dart';
 
-/// The five permanent bottom tabs: Leaderboard, Tasks, Diet, Exercise,
-/// Members. The Admin Panel has no tab — it's reached via a hidden
-/// long-press on the Brotherhood title inside the Tasks tab.
+/// Six permanent bottom tabs: Leaderboard, Tasks, Diet, Exercise, Members,
+/// Profile. The Admin Panel has no tab — reached via the ⚙️ icon in the
+/// Tasks AppBar or by long-pressing the "Brotherhood" title.
 class MainNavScreen extends StatefulWidget {
   const MainNavScreen({super.key});
 
@@ -44,6 +45,11 @@ class _MainNavScreenState extends State<MainNavScreen> {
       selectedIcon: Icon(Icons.group_rounded),
       label: 'Members',
     ),
+    NavigationDestination(
+      icon: Icon(Icons.person_outline_rounded),
+      selectedIcon: Icon(Icons.person_rounded),
+      label: 'Profile',
+    ),
   ];
 
   static const _screens = [
@@ -52,6 +58,7 @@ class _MainNavScreenState extends State<MainNavScreen> {
     DietScreen(),
     ExerciseScreen(),
     MembersScreen(),
+    ProfileScreen(),
   ];
 
   @override
