@@ -21,7 +21,7 @@ class MembersScreen extends StatelessWidget {
               final i = entry.key;
               final member = entry.value;
               final completions = provider.allMembersToday[member.id] ?? {};
-              final percent = provider.completionPercent(completions);
+              final percent = provider.completionPercent(completions, memberId: member.id);
               final completed = provider.completedCount(completions);
               final streak = provider.streaks[member.id]?.current ?? 0;
               final isCurrentUser =

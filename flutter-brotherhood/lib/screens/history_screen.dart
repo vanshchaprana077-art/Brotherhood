@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../providers/app_provider.dart';
 import '../models/member.dart';
 import '../models/task.dart';
+import '../constants.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -14,7 +15,7 @@ class HistoryScreen extends StatefulWidget {
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  static final DateTime _start = DateTime(2026, 7, 12);
+  static final DateTime _start = AppConstants.challengeStart;
   DateTime _selectedDate = DateTime.now();
   final ScrollController _dateScrollCtrl = ScrollController();
   // Stored at initState so dispose() can safely call it without context

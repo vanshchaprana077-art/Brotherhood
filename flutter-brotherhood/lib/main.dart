@@ -9,6 +9,7 @@ import 'firebase_options.dart';
 import 'providers/app_provider.dart';
 import 'screens/identity_selection_screen.dart';
 import 'screens/main_nav_screen.dart';
+import 'screens/profile_setup_screen.dart';
 import 'services/firebase_service.dart';
 
 // ── Background task dispatcher (must be a top-level function) ─────────────────
@@ -58,7 +59,7 @@ void main() async {
     frequency: const Duration(hours: 24),
     initialDelay: _timeUntilMidnight(),
     constraints: Constraints(networkType: NetworkType.connected),
-    existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
+    existingWorkPolicy: ExistingWorkPolicy.replace,
   );
 
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -207,6 +208,10 @@ class _AppRootState extends State<AppRoot> {
 
         if (provider.currentMember == null) {
           return const IdentitySelectionScreen();
+        }
+
+        if (provider.needsProfileSetup) {
+          return const ProfileSetupScreen();
         }
 
         return const MainNavScreen();

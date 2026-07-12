@@ -63,9 +63,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
               _RankList(
                 members: provider.leaderboardByStreak,
                 valueBuilder: (m) =>
-                    '${provider.streaks[m.id] ?? 0} days',
+                    '${provider.streaks[m.id]?.current ?? 0} days',
                 subtitleBuilder: (m) {
-                  final s = provider.streaks[m.id] ?? 0;
+                  final s = provider.streaks[m.id]?.current ?? 0;
                   if (s == 0) return 'No streak yet';
                   if (s == 1) return '1 day strong!';
                   return '$s days strong! 💪';

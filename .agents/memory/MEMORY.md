@@ -1,0 +1,1 @@
+- [Flutter Brotherhood setup](flutter-brotherhood-setup.md) — workmanager must stay at ^0.7.0; ExistingWorkPolicy not ExistingPeriodicWorkPolicy

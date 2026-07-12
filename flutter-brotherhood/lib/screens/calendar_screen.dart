@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../providers/app_provider.dart';
 import '../models/task.dart';
+import '../constants.dart';
 
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key});
@@ -14,9 +15,9 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
-  static final DateTime _start = DateTime(2026, 7, 12);
-  DateTime _focusedDay = DateTime.now().isBefore(DateTime(2026, 7, 12))
-      ? DateTime(2026, 7, 12)
+  static final DateTime _start = AppConstants.challengeStart;
+  DateTime _focusedDay = DateTime.now().isBefore(AppConstants.challengeStart)
+      ? AppConstants.challengeStart
       : DateTime.now();
   DateTime? _selectedDay;
 
